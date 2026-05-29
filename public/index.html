@@ -118,9 +118,13 @@
             <input id="set-showfps" type="checkbox" />
             <span class="sval"></span>
           </label>
-          <div class="controls-hint" style="margin-top:18px;text-align:left">
-            <b>ZQSD/WASD</b> bouger (sprint auto) · <b>Alt</b> marcher · <b>Souris</b> viser · <b>Clic</b> tirer ·
-            <b>Espace</b> sauter · <b>Ctrl</b> slide · <b>R</b> recharger · <b>1/2</b> armes · <b>Entrée</b> chat · <b>Échap</b> pause
+          <div class="field" style="margin-top:18px">
+            <span>Touches</span>
+            <div id="keybinds" class="keybinds"></div>
+            <button id="keybinds-reset" class="btn btn-ghost" style="margin-top:8px">Réinitialiser les touches</button>
+          </div>
+          <div class="controls-hint" style="margin-top:14px;text-align:left">
+            <b>Souris</b> viser · <b>Clic</b> tirer · <b>E</b> tyrolienne · <b>Entrée</b> chat · <b>Échap</b> pause
           </div>
         </section>
 
@@ -141,6 +145,13 @@
     <div class="spinner"></div>
     <p>Recherche d'un adversaire…</p>
     <button id="btn-cancel" class="btn btn-ghost">Annuler</button>
+  </div>
+
+  <!-- ===================== VOTE DE CARTE ===================== -->
+  <div id="mapvote" class="screen hidden">
+    <h1 class="title" style="font-size:40px">VOTE DE CARTE</h1>
+    <p id="mapvote-timer" class="muted">Choisis une carte…</p>
+    <div id="mapvote-options" class="buttons" style="flex-direction:row;gap:14px;flex-wrap:wrap;justify-content:center"></div>
   </div>
 
   <!-- ===================== HUD EN JEU ===================== -->

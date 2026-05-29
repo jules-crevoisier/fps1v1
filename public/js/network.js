@@ -19,7 +19,10 @@ export class Network {
     const s = this.socket;
     s.on("connect", () => { this.connected = true; });
     s.on("waiting", () => this._emit("waiting"));
+    s.on("mapVote", (d) => this._emit("mapVote", d));
     s.on("matchFound", (d) => this._emit("matchFound", d));
+    s.on("kill", (d) => this._emit("kill", d));            // blitz : un kill (sans reset)
+    s.on("respawn", (d) => this._emit("respawn", d));      // blitz : ma réapparition
     s.on("opponentState", (d) => this._emit("opponentState", d));
     s.on("hit", (d) => this._emit("hit", d));            // mon tir a touché (autoritaire)
     s.on("damaged", (d) => this._emit("damaged", d));    // j'ai pris des dégâts (autoritaire)
@@ -33,7 +36,8 @@ export class Network {
     s.on("disconnect", () => { this.connected = false; this._emit("disconnect"); });
   }
 
-  queue(pseudo, classId, loadout, mapId) { this.socket?.emit("queue", { pseudo, classId, loadout, mapId }); }
+  queue(pseudo, classId, loadout, mapId, mode) { this.socket?.emit("queue", { pseudo, classId, loadout, mapId, mode }); }
+  vote(mapId) { this.socket?.emit("vote", mapId); }
   sendState(state) { this.socket?.emit("state", state); }
   sendShot(data) { this.socket?.emit("shot", data); }
   sendChat(text) { this.socket?.emit("chat", text); }

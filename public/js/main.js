@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { SETTINGS, CLASSES, USER, saveUser, PROFILE, saveProfile, weaponColor, GAMEMODES,
-  QUALITY_PRESETS, loadAllData, playerLevel } from "./config.js";
+  QUALITY_PRESETS, loadAllData, playerLevel, DEFAULT_KEYBINDS } from "./config.js";
 import { steam, ACH } from "./steam.js";
 import { Input } from "./input.js";
 import { buildArena, MAP_LIST, loadMaps, registerMap, unregisterMap, ensureMap } from "./arena.js";
@@ -158,6 +158,23 @@ function checkTeleporters(dt) {
   }
 }
 
+// Tyroliennes : E près d'une extrémité → s'accroche et glisse vers l'autre bout.
+function checkZiplines() {
+  if (player.zip) return;
+  const zls = env?.ziplines;
+  if (!zls || !zls.length || !input.act("use")) return;
+  for (const zl of zls) {
+    const da = Math.hypot(player.pos.x - zl.a[0], player.pos.z - zl.a[2]);
+    const db = Math.hypot(player.pos.x - zl.b[0], player.pos.z - zl.b[2]);
+    if (Math.min(da, db) <= (zl.r || 2)) {
+      const [from, to] = da <= db ? [zl.a, zl.b] : [zl.b, zl.a];
+      player.startZip({ x: from[0], y: from[1] + 2, z: from[2] }, { x: to[0], y: to[1] + 2, z: to[2] }, zl.speed);
+      audio.ui?.();
+      break;
+    }
+  }
+}
+
 // Par projectile : visuels (tracer, impact) + dégâts UNIQUEMENT en solo.
 function onPlayerShoot(origin, dir, weapon) {
   const ray = new THREE.Raycaster(origin, dir, 0.1, weapon.range);
@@ -301,6 +318,7 @@ function loop(nowMs = performance.now()) {
     } else {
       player.update(dt, input, env);
       checkTeleporters(dt);
+      checkZiplines();
 
       // ADS : zoom de la caméra (lunette pour sniper/dmr)
       const ads = input.adsDown && input.locked;
@@ -503,6 +521,55 @@ function updateSettingsDOM() {
   const sf = document.getElementById("ps-showfps"); if (sf) sf.checked = USER.showFps;
 }
 function syncPauseSettings() { updateSettingsDOM(); }
+
+// ---- Remap des touches ----
+const KEYBIND_ACTIONS = [
+  ["forward", "Avancer"], ["back", "Reculer"], ["left", "Gauche"], ["right", "Droite"],
+  ["jump", "Sauter"], ["walk", "Marcher"], ["slide", "Slide"], ["reload", "Recharger"],
+  ["weapon1", "Arme 1"], ["weapon2", "Arme 2"], ["use", "Utiliser / Tyrolienne"],
+];
+function keyLabel(code) {
+  if (!code) return "—";
+  const map = { Space: "Espace", ControlLeft: "Ctrl", ControlRight: "Ctrl D", AltLeft: "Alt", AltRight: "Alt D",
+    ShiftLeft: "Maj", ShiftRight: "Maj D", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" };
+  if (map[code]) return map[code];
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  return code;
+}
+let _rebinding = null;
+function setupKeybinds() {
+  renderKeybinds();
+  document.getElementById("keybinds-reset").onclick = () => {
+    USER.keybinds = { ...DEFAULT_KEYBINDS };
+    input.setBinds(USER.keybinds); saveUser(); renderKeybinds();
+  };
+  // capture globale d'une touche pendant un remap
+  addEventListener("keydown", (e) => {
+    if (!_rebinding) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.code !== "Escape") {
+      USER.keybinds[_rebinding] = e.code;
+      input.setBinds(USER.keybinds); saveUser();
+    }
+    _rebinding = null; renderKeybinds();
+  }, true);
+}
+function renderKeybinds() {
+  const c = document.getElementById("keybinds");
+  if (!c) return;
+  c.innerHTML = "";
+  for (const [action, label] of KEYBIND_ACTIONS) {
+    const row = document.createElement("div");
+    row.className = "keybind-row";
+    const lab = document.createElement("span"); lab.className = "kb-label"; lab.textContent = label;
+    const btn = document.createElement("button"); btn.className = "btn btn-ghost kb-key";
+    btn.textContent = _rebinding === action ? "Appuyez…" : keyLabel(USER.keybinds[action]);
+    btn.onclick = () => { _rebinding = action; renderKeybinds(); };
+    row.appendChild(lab); row.appendChild(btn);
+    c.appendChild(row);
+  }
+}
 function setupPauseSettings() {
   const bind = (id, fn) => { const e = document.getElementById(id); if (e) e.oninput = e.onchange = fn; };
   bind("ps-sens", (e) => { USER.sensitivity = parseFloat(e.target.value); applyLiveSettings(); updateSettingsDOM(); saveUser(); });
@@ -524,6 +591,7 @@ function setupPauseSettings() {
 function backToMenu() {
   ui.el.pause.classList.add("hidden");
   document.getElementById("pause-settings").classList.add("hidden");
+  hideMapVote();
   document.exitPointerLock();
   if (net.socket) net.disconnect();
   // Retour à l'éditeur après un test de carte (au lieu du menu).
@@ -615,10 +683,13 @@ function refreshMapSelector() {
 // ============================ ONLINE ============================
 function setupNet() {
   net.on("waiting", () => ui.show("waiting"));
+  net.on("mapVote", (d) => showMapVote(d.candidates || [], d.durationMs || 9000));
   net.on("matchFound", async (d) => {
+    hideMapVote();
     onlineSide = d.side;
+    if (d.mode && GAMEMODES[d.mode]) PROFILE.mode = d.mode;  // mode imposé par le serveur
     const oppClass = d.opponent?.classId || "assault";
-    if (d.mapId) { await ensureMap(d.mapId); PROFILE.map = d.mapId; }  // map imposée par le serveur (aléatoire), chargée à la demande
+    if (d.mapId) { await ensureMap(d.mapId); PROFILE.map = d.mapId; }  // map imposée par le serveur, chargée à la demande
     startGame("online");                 // (re)construit la scène + oppAvatar
     oppAvatar.setVisible(true);
     oppAvatar.setClassColor(oppClass);
@@ -676,6 +747,25 @@ function setupNet() {
     player.spawn(env.spawns[onlineSide].clone(), Math.PI / 4);
     player.invuln = 2.4;
     roundTimer = 2;
+    camera.position.copy(player.pos);
+    const dd = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+    camera.lookAt(player.pos.clone().add(dd));
+  });
+  // BLITZ : un kill sans reset — seule la victime réapparaît (event "respawn").
+  net.on("kill", (d) => {
+    const me = d.scores[onlineSide] || 0, opp = d.scores[1 - onlineSide] || 0;
+    score = { me, opp }; ui.setScore(me, opp);
+    if (d.killerSide === onlineSide) { ui.killfeed("Tu as éliminé l'adversaire", true); grantKillXp(player.weaponState.id, false); }
+    if (d.victimSide === onlineSide) {
+      ui.killfeed("Tu as été éliminé", false); PROFILE.stats.deaths++;
+      player.alive = false;                       // mort : en attente de réapparition serveur
+      ui.stateTag("RÉAPPARITION…", "#ff9e2c");
+    }
+  });
+  net.on("respawn", () => {
+    player.spawn(env.spawns[onlineSide].clone(), Math.PI / 4);
+    player.alive = true; player.invuln = 1.6;
+    ui.clearStateTag();
     camera.position.copy(player.pos);
     const dd = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
     camera.lookAt(player.pos.clone().add(dd));
@@ -797,6 +887,10 @@ function setupUI() {
     saveUser();
   };
 
+  // ---- Touches configurables (remap) ----
+  input.setBinds(USER.keybinds);
+  setupKeybinds();
+
   // ---- Paramètres accessibles depuis la PAUSE ----
   setupPauseSettings();
 
@@ -835,9 +929,43 @@ function setupUI() {
   });
 }
 
-// Override de queue pour envoyer la carte au serveur (sync online).
+// Override de queue : envoie carte (legacy) + mode choisi au serveur.
 const _origQueue = net.queue.bind(net);
-net.queue = (pseudo, classId, loadout) => _origQueue(pseudo, classId, loadout, PROFILE.map);
+net.queue = (pseudo, classId, loadout) => _origQueue(pseudo, classId, loadout, PROFILE.map, PROFILE.mode);
+
+// ---- Écran de vote de carte (online) ----
+let mapVoteTimer = 0;
+function showMapVote(candidates, durationMs) {
+  const screen = document.getElementById("mapvote");
+  const opts = document.getElementById("mapvote-options");
+  const timerEl = document.getElementById("mapvote-timer");
+  document.getElementById("waiting").classList.add("hidden");
+  opts.innerHTML = "";
+  let voted = false;
+  for (const id of candidates) {
+    const name = (MAP_LIST.find((m) => m.id === id)?.name) || id;
+    const b = document.createElement("button");
+    b.className = "btn btn-secondary";
+    b.textContent = name;
+    b.onclick = () => {
+      if (voted) return; voted = true; net.vote(id);
+      b.classList.add("btn-primary");
+      timerEl.textContent = "Vote : " + name + " — en attente de l'adversaire…";
+      [...opts.children].forEach((c) => { c.disabled = true; });
+    };
+    opts.appendChild(b);
+  }
+  screen.classList.remove("hidden");
+  let t = Math.ceil(durationMs / 1000);
+  clearInterval(mapVoteTimer);
+  const tick = () => { if (!voted) timerEl.textContent = `Choisis une carte…  ${Math.max(0, t)}s`; t--; if (t < 0) clearInterval(mapVoteTimer); };
+  tick();
+  mapVoteTimer = setInterval(tick, 1000);
+}
+function hideMapVote() {
+  clearInterval(mapVoteTimer);
+  document.getElementById("mapvote").classList.add("hidden");
+}
 
 // Boot : on charge d'abord les données (armes JSON, cartes, profil/réglages persistés)
 // AVANT de construire l'UI, car celle-ci en dépend.

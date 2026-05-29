@@ -22,6 +22,7 @@ export class Player {
     this.slideStartSpeed = 0;  // vitesse au déclenchement (pour la décroissance)
     this.slideCd = 0;          // cooldown avant re-slide
     this.slideKeyWasDown = false; // détection de front montant (re-presser pour re-slider)
+    this.zip = null;              // état tyrolienne courant
     this.height = SETTINGS.playerHeight;
 
     this.fireCd = 0;
@@ -57,6 +58,7 @@ export class Player {
     this.health = this.maxHealth;
     this.alive = true;
     this.sliding = false; this.slideCd = 0; this.slideKeyWasDown = false;
+    this.zip = null;
     this.height = SETTINGS.playerHeight;
     this.weapons.forEach((w) => { w.ammo = WEAPONS[w.id].mag; w.reloading = false; w.reloadT = 0; });
   }
@@ -133,16 +135,47 @@ export class Player {
     ).normalize();
   }
 
+  // Accroche le joueur à une tyrolienne entre a et b (Vector3-like {x,y,z}).
+  startZip(a, b, speed = 16) {
+    const from = new THREE.Vector3(a.x ?? a[0], (a.y ?? a[1]) + this.height, a.z ?? a[2]);
+    const to = new THREE.Vector3(b.x ?? b[0], (b.y ?? b[1]) + this.height, b.z ?? b[2]);
+    const dir = to.clone().sub(from); const len = dir.length() || 1; dir.normalize();
+    this.zip = { from, to, dir, len, speed, travelled: 0 };
+    this.sliding = false;
+  }
+
   _move(dt, input, env) {
+    // --- Tyrolienne (zipline) : glisse le long de la ligne, saut pour lâcher ---
+    if (this.zip) {
+      const z = this.zip;
+      const step = z.speed * dt;
+      z.travelled += step;
+      const total = z.len;
+      const f = Math.min(1, z.travelled / total);
+      this.pos.x = z.from.x + (z.to.x - z.from.x) * f;
+      this.pos.y = z.from.y + (z.to.y - z.from.y) * f;
+      this.pos.z = z.from.z + (z.to.z - z.from.z) * f;
+      this.onGround = false;
+      const jump = input.act("jump");
+      if (f >= 1 || jump) {
+        // détache : conserve l'élan horizontal + petit saut
+        this.vel.x = z.dir.x * z.speed; this.vel.z = z.dir.z * z.speed;
+        this.vel.y = jump ? SETTINGS.jumpForce * 0.8 : 0;
+        this.zip = null;
+      }
+      this.slideKeyWasDown = input.act("slide") || input.down("KeyC");
+      return;
+    }
+
     // Directions horizontales relatives au yaw
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     const right = new THREE.Vector3().crossVectors(fwd, UP); // droite réelle de l'écran
 
     let ix = 0, iz = 0;
-    if (input.down("KeyW") || input.down("ArrowUp")) iz += 1;
-    if (input.down("KeyS") || input.down("ArrowDown")) iz -= 1;
-    if (input.down("KeyD") || input.down("ArrowRight")) ix += 1;
-    if (input.down("KeyA") || input.down("KeyQ") || input.down("ArrowLeft")) ix -= 1;
+    if (input.act("forward") || input.down("ArrowUp")) iz += 1;
+    if (input.act("back") || input.down("ArrowDown")) iz -= 1;
+    if (input.act("right") || input.down("ArrowRight")) ix += 1;
+    if (input.act("left") || input.down("KeyQ") || input.down("ArrowLeft")) ix -= 1;
 
     const wish = new THREE.Vector3()
       .addScaledVector(fwd, iz)
@@ -150,8 +183,8 @@ export class Player {
     if (wish.lengthSq() > 0) wish.normalize();
 
     // Sprint par DÉFAUT ; Alt = marcher (lent et silencieux)
-    const walking = input.down("AltLeft") || input.down("AltRight");
-    const wantSlide = input.down("ControlLeft") || input.down("KeyC");
+    const walking = input.act("walk") || input.down("AltRight");
+    const wantSlide = input.act("slide") || input.down("KeyC");
 
     const sprintSpeed = SETTINGS.moveSpeed * this.cls.speedMult * SETTINGS.sprintMult;
     let speed = SETTINGS.moveSpeed * this.cls.speedMult * (walking ? 0.5 : SETTINGS.sprintMult);
@@ -209,7 +242,7 @@ export class Player {
     }
 
     // --- Saut + gravité ---
-    if ((input.down("Space")) && this.onGround) {
+    if (input.act("jump") && this.onGround) {
       this.vel.y = SETTINGS.jumpForce;
       this.onGround = false;
       if (this.sliding) { this.sliding = false; this.slideCd = SETTINGS.slideCooldown; }
@@ -274,9 +307,9 @@ export class Player {
       if (ws.reloadT <= 0) { ws.reloading = false; ws.ammo = this.weapon.mag; }
     }
 
-    if (input.down("KeyR")) this.reload();
-    if (input.down("Digit1")) this.switchWeapon(0);
-    if (input.down("Digit2")) this.switchWeapon(1);
+    if (input.act("reload")) this.reload();
+    if (input.act("weapon1")) this.switchWeapon(0);
+    if (input.act("weapon2")) this.switchWeapon(1);
 
     // tir
     const w = this.weapon;

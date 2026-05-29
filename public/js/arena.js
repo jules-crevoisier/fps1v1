@@ -279,6 +279,26 @@ export function buildArenaFromData(scene, map, opts = {}) {
     mkMarker(tp.to, 0xff9e2c);    // sortie (ambre)
   }
 
+  // --- Tyroliennes (optionnelles) ---
+  // Schéma : map.ziplines = [ { a:[x,y,z], b:[x,y,z], speed? } ]. Câble + petites bornes.
+  // S'accroche avec E près d'une extrémité ; on glisse jusqu'à l'autre bout.
+  const ziplines = [];
+  for (const zl of (Array.isArray(map.ziplines) ? map.ziplines : [])) {
+    if (!Array.isArray(zl.a) || !Array.isArray(zl.b)) continue;
+    const a = new THREE.Vector3(zl.a[0], zl.a[1] + 2.0, zl.a[2]);
+    const b = new THREE.Vector3(zl.b[0], zl.b[1] + 2.0, zl.b[2]);
+    ziplines.push({ a: zl.a.slice(), b: zl.b.slice(), top: [a.x, a.y, a.z], speed: zl.speed || 16, r: zl.r || 2.0 });
+    const cableGeo = new THREE.BufferGeometry().setFromPoints([a, b]);
+    const cable = new THREE.Line(cableGeo, new THREE.LineBasicMaterial({ color: 0xffd27a }));
+    group.add(cable);
+    for (const p of [a, b]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, p.y, 6),
+        toonMat(map.coverColor || "#2b3a4f"));
+      post.position.set(p.x, p.y / 2, p.z); post.castShadow = true;
+      group.add(post);
+    }
+  }
+
   scene.add(group);
 
   // Spawns : depuis la carte, sinon 6 points calculés (coins + axes).
@@ -305,5 +325,5 @@ export function buildArenaFromData(scene, map, opts = {}) {
   // solids = ce qui arrête VISUELLEMENT les balles (tracer + impact) : on y ajoute le sol.
   if (floor && !solids.includes(floor)) solids.push(floor);
 
-  return { group, colliders, spawns, solids, occluders, coverPoints, floor, floorMat, water, terrain, animated, teleporters, map };
+  return { group, colliders, spawns, solids, occluders, coverPoints, floor, floorMat, water, terrain, animated, teleporters, ziplines, map };
 }

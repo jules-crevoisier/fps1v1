@@ -62,6 +62,13 @@ loadMapsFromDisk();
 const CLASS_HP = { assault: 100, scout: 80, tank: 90 };
 const SCORE_TO_WIN = 7;
 const ROUND_INVULN_MS = 2300;
+
+// Modes de jeu (autorité serveur). Doit rester cohérent avec GAMEMODES côté client.
+const MODES = {
+  duel:  { scoreToWin: 7,  roundReset: true,  respawnMs: 1600, invulnMs: 2300 },
+  blitz: { scoreToWin: 12, roundReset: false, respawnMs: 800,  invulnMs: 1500 },
+};
+const VALID_MODE = (m) => Object.prototype.hasOwnProperty.call(MODES, m);
 const HEAD_Y = 1.62, BODY_Y = 0.95;     // hauteurs de hitbox (monde)
 const HEAD_R = 0.32, BODY_R = 0.6;       // rayons angulaires tolérés
 const ARENA_LIMIT = 29;                  // demi-taille d'arène (anti out-of-bounds)
@@ -74,8 +81,14 @@ const HEAL_AMOUNT = 35;
 const HEAL_RESPAWN_MS = 10_000;
 const HEAL_RADIUS = 1.0; // rayon de ramassage (monde)
 
-let waiting = null;
+const waitingByMode = new Map();   // mode → socket en attente
 const rooms = new Map();
+
+function deleteRoom(id) {
+  const room = rooms.get(id);
+  if (room && room.timers) for (const t of room.timers) clearTimeout(t);
+  rooms.delete(id);
+}
 
 function makeRoomId() { return "r" + Math.random().toString(36).slice(2, 8); }
 
@@ -233,21 +246,97 @@ function resolveShot(room, shooter, target, msg) {
 function onKill(room, killer, victim) {
   room.scores[killer.id] = (room.scores[killer.id] || 0) + 1;
   const scores = { [killer.side]: room.scores[killer.id], [victim.side]: room.scores[victim.id] || 0 };
+  const cfg = room.cfg || MODES.duel;
 
-  if (room.scores[killer.id] >= SCORE_TO_WIN) {
+  if (room.scores[killer.id] >= cfg.scoreToWin) {
     io.to(room.ids[0]).emit("gameOver", { winnerSide: killer.side, scores });
     io.to(room.ids[1]).emit("gameOver", { winnerSide: killer.side, scores });
-    rooms.delete(room.id);
+    deleteRoom(room.id);
     return;
   }
-  // reset de manche : pleine vie + invincibilité, chacun à son spawn (= son side)
-  const until = Date.now() + ROUND_INVULN_MS;
-  for (const id of room.ids) {
-    const p = room.players[id];
-    p.health = p.maxHealth; p.alive = true; p.invulnUntil = until;
+
+  if (cfg.roundReset) {
+    // DUEL : reset de manche — les deux pleine vie + invincibilité, à leur spawn.
+    const until = Date.now() + cfg.invulnMs;
+    for (const id of room.ids) {
+      const p = room.players[id];
+      p.health = p.maxHealth; p.alive = true; p.invulnUntil = until;
+    }
+    io.to(room.ids[0]).emit("roundReset", { killerSide: killer.side, scores });
+    io.to(room.ids[1]).emit("roundReset", { killerSide: killer.side, scores });
+  } else {
+    // BLITZ : seule la victime réapparaît (après délai), le tueur continue.
+    io.to(room.ids[0]).emit("kill", { killerSide: killer.side, victimSide: victim.side, scores });
+    io.to(room.ids[1]).emit("kill", { killerSide: killer.side, victimSide: victim.side, scores });
+    const t = setTimeout(() => {
+      if (!rooms.has(room.id)) return;
+      victim.health = victim.maxHealth; victim.alive = true;
+      victim.invulnUntil = Date.now() + cfg.invulnMs;
+      io.to(victim.id).emit("respawn", {});
+    }, cfg.respawnMs);
+    (room.timers ||= []).push(t);
   }
-  io.to(room.ids[0]).emit("roundReset", { killerSide: killer.side, scores });
-  io.to(room.ids[1]).emit("roundReset", { killerSide: killer.side, scores });
+}
+
+// Tire n cartes distinctes au hasard (candidates au vote).
+function pickCandidates(n) {
+  const ids = Object.keys(MAP_DATA);
+  for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+  return ids.slice(0, Math.min(n, ids.length));
+}
+
+// Lance la phase de VOTE de carte entre deux joueurs appariés (même mode).
+function startVote(a, b, mode) {
+  const pending = { id: makeRoomId(), ids: [a.id, b.id], sockets: { [a.id]: a, [b.id]: b },
+    mode, candidates: pickCandidates(3), votes: {}, done: false };
+  a.data.pending = pending; b.data.pending = pending;
+  const payload = { candidates: pending.candidates, mode, durationMs: 9000 };
+  a.emit("mapVote", payload); b.emit("mapVote", payload);
+  pending.timer = setTimeout(() => finalizeMatch(pending), 9500);
+}
+
+function finalizeMatch(pending) {
+  if (pending.done) return;
+  pending.done = true;
+  clearTimeout(pending.timer);
+  const a = pending.sockets[pending.ids[0]], b = pending.sockets[pending.ids[1]];
+  // un joueur parti : remettre l'autre en file
+  if (!a || !b || !a.connected || !b.connected) {
+    const alive = [a, b].find((s) => s && s.connected);
+    if (alive) { waitingByMode.set(pending.mode, alive); alive.emit("waiting"); }
+    return;
+  }
+  // résolution : majorité des votes, sinon candidate au hasard
+  const votes = Object.values(pending.votes);
+  let mapId;
+  if (votes.length) {
+    const count = {}; votes.forEach((v) => { count[v] = (count[v] || 0) + 1; });
+    const max = Math.max(...Object.values(count));
+    const top = Object.keys(count).filter((k) => count[k] === max);
+    mapId = top[Math.floor(Math.random() * top.length)];
+  } else {
+    mapId = pending.candidates[Math.floor(Math.random() * pending.candidates.length)];
+  }
+  const cfg = MODES[pending.mode] || MODES.duel;
+  const roomId = pending.id;
+  a.join(roomId); b.join(roomId);
+  a.data.roomId = roomId; b.data.roomId = roomId; a.data.oppId = b.id; b.data.oppId = a.id;
+  const pa = newPlayer(a.id, 0, a.data.pseudo, a.data.classId, a.data.loadout);
+  const pb = newPlayer(b.id, 1, b.data.pseudo, b.data.classId, b.data.loadout);
+  const until = Date.now() + cfg.invulnMs;
+  pa.invulnUntil = until; pb.invulnUntil = until;
+  const room = {
+    id: roomId, ids: [a.id, b.id], mapId, mode: pending.mode, cfg,
+    occluders: buildOccluders(mapId),
+    players: { [a.id]: pa, [b.id]: pb },
+    scores: { [a.id]: 0, [b.id]: 0 },
+    pickups: makeHealPickupsForMap(mapId), timers: [],
+  };
+  rooms.set(roomId, room);
+  a.emit("matchFound", { roomId, side: 0, mapId, mode: pending.mode, opponent: { pseudo: b.data.pseudo, classId: b.data.classId } });
+  b.emit("matchFound", { roomId, side: 1, mapId, mode: pending.mode, opponent: { pseudo: a.data.pseudo, classId: a.data.classId } });
+  io.to(a.id).emit("pickupsInit", { pickups: room.pickups });
+  io.to(b.id).emit("pickupsInit", { pickups: room.pickups });
 }
 
 io.on("connection", (socket) => {
@@ -255,41 +344,24 @@ io.on("connection", (socket) => {
     socket.data.pseudo = String((data && data.pseudo) || "Joueur").slice(0, 16);
     socket.data.classId = (data && data.classId) || "assault";
     socket.data.loadout = (data && data.loadout) ? [data.loadout.primary, data.loadout.secondary] : null;
-    socket.data.mapId = VALID_MAP(data && data.mapId) ? data.mapId : "arena";
+    socket.data.mode = VALID_MODE(data && data.mode) ? data.mode : "duel";
+    const mode = socket.data.mode;
 
+    const waiting = waitingByMode.get(mode);
     if (waiting && waiting.id !== socket.id && waiting.connected) {
-      const a = waiting; waiting = null;
-      const roomId = makeRoomId();
-      a.join(roomId); socket.join(roomId);
-      a.data.roomId = roomId; socket.data.roomId = roomId;
-      a.data.oppId = socket.id; socket.data.oppId = a.id;
-      // Carte ALÉATOIRE en ligne (parmi toutes les cartes chargées).
-      const allMaps = Object.keys(MAP_DATA);
-      const mapId = allMaps.length ? allMaps[Math.floor(Math.random() * allMaps.length)] : "arena";
-
-      const room = {
-        id: roomId, ids: [a.id, socket.id],
-        mapId,
-        occluders: buildOccluders(mapId),
-        players: {
-          [a.id]: newPlayer(a.id, 0, a.data.pseudo, a.data.classId, a.data.loadout),
-          [socket.id]: newPlayer(socket.id, 1, socket.data.pseudo, socket.data.classId, socket.data.loadout),
-        },
-        scores: { [a.id]: 0, [socket.id]: 0 },
-        pickups: makeHealPickupsForMap(mapId),
-      };
-      rooms.set(roomId, room);
-
-      a.emit("matchFound", { roomId, side: 0, mapId, opponent: { pseudo: socket.data.pseudo, classId: socket.data.classId } });
-      socket.emit("matchFound", { roomId, side: 1, mapId, opponent: { pseudo: a.data.pseudo, classId: a.data.classId } });
-
-      // Initialisation des pickups (état complet) côté clients
-      io.to(a.id).emit("pickupsInit", { pickups: room.pickups });
-      io.to(socket.id).emit("pickupsInit", { pickups: room.pickups });
+      waitingByMode.delete(mode);
+      startVote(waiting, socket, mode);
     } else {
-      waiting = socket;
+      waitingByMode.set(mode, socket);
       socket.emit("waiting");
     }
+  });
+
+  socket.on("vote", (mapId) => {
+    const pending = socket.data.pending;
+    if (!pending || pending.done) return;
+    if (pending.candidates.includes(mapId)) pending.votes[socket.id] = mapId;
+    if (Object.keys(pending.votes).length >= 2) finalizeMatch(pending);
   });
 
   socket.on("state", (s) => {
@@ -326,9 +398,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    if (waiting && waiting.id === socket.id) waiting = null;
+    // retirer de la file d'attente (quel que soit le mode)
+    for (const [m, s] of waitingByMode) if (s && s.id === socket.id) waitingByMode.delete(m);
+    // vote en cours : remettre l'autre joueur en file
+    const pending = socket.data.pending;
+    if (pending && !pending.done) {
+      pending.done = true; clearTimeout(pending.timer);
+      const other = pending.ids.map((id) => pending.sockets[id]).find((s) => s && s.id !== socket.id && s.connected);
+      if (other) { waitingByMode.set(pending.mode, other); other.emit("waiting"); }
+    }
     const rid = socket.data.roomId;
-    if (rid) { socket.to(rid).emit("opponentLeft"); rooms.delete(rid); }
+    if (rid) { socket.to(rid).emit("opponentLeft"); deleteRoom(rid); }
   });
 });
 

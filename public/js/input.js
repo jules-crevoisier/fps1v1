@@ -3,6 +3,7 @@ export class Input {
   constructor(canvas) {
     this.canvas = canvas;
     this.keys = {};
+    this.binds = {};
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.fireDown = false;
@@ -67,4 +68,9 @@ export class Input {
   }
 
   down(code) { return !!this.keys[code]; }
+
+  // Touches configurables (remap). Renseignées depuis USER.keybinds au boot.
+  setBinds(binds) { this.binds = binds || {}; }
+  // État d'une action remappée (ex. "forward", "jump", "reload").
+  act(name) { const c = this.binds && this.binds[name]; return c ? !!this.keys[c] : false; }
 }

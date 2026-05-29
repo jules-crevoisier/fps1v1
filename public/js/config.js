@@ -96,7 +96,12 @@ export const QUALITY_PRESETS = {
 const FPS_CAPS = [0, 30, 60, 120, 144, 240];
 
 // ---- Réglages utilisateur persistés ----
-const DEFAULT_USER = { version: DATA_VERSION, sensitivity: 1.0, fov: 90, quality: "high", fpsCap: 0, showFps: false, volume: 0.5 };
+export const DEFAULT_KEYBINDS = {
+  forward: "KeyW", back: "KeyS", left: "KeyA", right: "KeyD",
+  jump: "Space", walk: "AltLeft", slide: "ControlLeft",
+  reload: "KeyR", weapon1: "Digit1", weapon2: "Digit2", use: "KeyE",
+};
+const DEFAULT_USER = { version: DATA_VERSION, sensitivity: 1.0, fov: 90, quality: "high", fpsCap: 0, showFps: false, volume: 0.5, keybinds: { ...DEFAULT_KEYBINDS } };
 export const USER = { ...DEFAULT_USER };
 
 const isFiniteNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -111,6 +116,12 @@ function applyUser(saved) {
   USER.fpsCap = FPS_CAPS.includes(o.fpsCap) ? o.fpsCap : DEFAULT_USER.fpsCap;
   USER.showFps = typeof o.showFps === "boolean" ? o.showFps : DEFAULT_USER.showFps;
   USER.volume = clamp(num(o.volume, DEFAULT_USER.volume), 0, 1);
+  USER.keybinds = { ...DEFAULT_KEYBINDS };
+  if (o.keybinds && typeof o.keybinds === "object") {
+    for (const k of Object.keys(DEFAULT_KEYBINDS)) {
+      if (typeof o.keybinds[k] === "string" && o.keybinds[k]) USER.keybinds[k] = o.keybinds[k];
+    }
+  }
   USER.version = DATA_VERSION;
 }
 
