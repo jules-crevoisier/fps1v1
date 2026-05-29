@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "weapons": {
+    "rifle": {
+      "name": "Fusil d'assaut",
+      "slot": "primary",
+      "unlock": 1,
+      "damage": 22,
+      "fireRate": 9,
+      "mag": 30,
+      "reload": 2,
+      "spread": 0.008,
+      "auto": true,
+      "range": 200,
+      "color": "#ff9e2c",
+      "recoil": 0.013,
+      "recoilH": 0.5,
+      "shake": 0.05,
+      "viewModel": {
+        "clips": {
+          "equip": {
+            "dur": 2,
+            "loop": "once",
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  -0.5235987755982988,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 0.253,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 2,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              }
+            ]
+          },
+          "reload": {
+            "dur": 2,
+            "loop": "once",
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 0.24,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  1.8325957145940461
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 0.525,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 2,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "smg": {
+      "name": "SMG",
+      "slot": "primary",
+      "unlock": 1,
+      "damage": 14,
+      "fireRate": 15,
+      "mag": 28,
+      "reload": 1.6,
+      "spread": 0.016,
+      "auto": true,
+      "range": 120,
+      "color": "#ffc14d",
+      "recoil": 0.008,
+      "recoilH": 0.7,
+      "shake": 0.035
+    },
+    "sniper": {
+      "name": "Sniper",
+      "slot": "primary",
+      "unlock": 2,
+      "damage": 90,
+      "fireRate": 1.1,
+      "mag": 5,
+      "reload": 2.8,
+      "spread": 0,
+      "auto": false,
+      "range": 400,
+      "color": "#ffd27a",
+      "headshotMult": 2,
+      "recoil": 0,
+      "recoilH": 0,
+      "shake": 0.2
+    },
+    "shotgun": {
+      "name": "Fusil à pompe",
+      "slot": "primary",
+      "unlock": 3,
+      "damage": 11,
+      "fireRate": 1.4,
+      "mag": 6,
+      "reload": 2.4,
+      "spread": 0.05,
+      "auto": false,
+      "range": 28,
+      "color": "#ff7b3d",
+      "pellets": 9,
+      "recoil": 0.05,
+      "recoilH": 0.6,
+      "shake": 0.16
+    },
+    "dmr": {
+      "name": "Tireur d'élite",
+      "slot": "primary",
+      "unlock": 4,
+      "damage": 48,
+      "fireRate": 3.5,
+      "mag": 12,
+      "reload": 2.2,
+      "spread": 0.004,
+      "auto": false,
+      "range": 300,
+      "color": "#ffb347",
+      "headshotMult": 1.7,
+      "recoil": 0.035,
+      "recoilH": 0.3,
+      "shake": 0.1
+    },
+    "lmg": {
+      "name": "Mitrailleuse",
+      "slot": "primary",
+      "unlock": 6,
+      "damage": 20,
+      "fireRate": 11,
+      "mag": 60,
+      "reload": 3.4,
+      "spread": 0.02,
+      "auto": true,
+      "range": 180,
+      "color": "#ffa64d",
+      "recoil": 0.016,
+      "recoilH": 0.8,
+      "shake": 0.06
+    },
+    "pistol": {
+      "name": "Pistolet",
+      "slot": "secondary",
+      "unlock": 1,
+      "damage": 28,
+      "fireRate": 4,
+      "mag": 12,
+      "reload": 1.4,
+      "spread": 0.012,
+      "auto": false,
+      "range": 100,
+      "color": "#9aa0aa",
+      "recoil": 0.022,
+      "recoilH": 0.4,
+      "shake": 0.06,
+      "viewModel": {
+        "clips": {
+          "equip": {
+            "dur": 2,
+            "loop": "loop",
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0.7853981633974483,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              },
+              {
+                "t": 0.421,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  6.283185307179586,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "ease": "smooth"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "machpist": {
+      "name": "Pistolet-auto",
+      "slot": "secondary",
+      "unlock": 2,
+      "damage": 13,
+      "fireRate": 16,
+      "mag": 20,
+      "reload": 1.5,
+      "spread": 0.03,
+      "auto": true,
+      "range": 70,
+      "color": "#b0b6c0",
+      "recoil": 0.01,
+      "recoilH": 0.9,
+      "shake": 0.03
+    },
+    "revolver": {
+      "name": "Revolver",
+      "slot": "secondary",
+      "unlock": 5,
+      "damage": 55,
+      "fireRate": 2,
+      "mag": 6,
+      "reload": 1.9,
+      "spread": 0.006,
+      "auto": false,
+      "range": 140,
+      "color": "#c0c6d0",
+      "headshotMult": 1.6,
+      "recoil": 0.05,
+      "recoilH": 0.3,
+      "shake": 0.12
+    }
+  }
+}

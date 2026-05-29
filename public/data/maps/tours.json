@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "id": "tours",
+  "name": "Tours",
+  "size": 60,
+  "floorColor": "#382c47",
+  "background": "#141b26",
+  "wallColor": "#222d3d",
+  "coverColor": "#2b3a4f",
+  "accentColor": "#ff9e2c",
+  "fog": { "color": "#141b26", "near": 70, "far": 190 },
+  "lights": {
+    "hemisphere": { "sky": "#bfd8ff", "ground": "#40464f", "intensity": 1.35 },
+    "directional": { "color": "#ffffff", "intensity": 1.9, "position": [20, 40, 15], "castShadow": true, "shadowMapSize": 2048 },
+    "fill": { "color": "#8fb0ff", "intensity": 0.5, "position": [-25, 20, -20] },
+    "ambient": { "color": "#55657a", "intensity": 0.7 }
+  },
+  "covers": [
+    { "pos": [-10, 2.5, -10], "size": [3, 5, 3], "accent": true },
+    { "pos": [10, 2.5, 10],   "size": [3, 5, 3] },
+    { "pos": [10, 2.5, -10],  "size": [3, 5, 3] },
+    { "pos": [-10, 2.5, 10],  "size": [3, 5, 3] },
+    { "pos": [0, 2.5, 0],     "size": [3, 5, 3] },
+    { "pos": [0, 0.75, -14],  "size": [10, 1.5, 1.5] },
+    { "pos": [0, 0.75, 14],   "size": [10, 1.5, 1.5] },
+    { "pos": [-14, 0.75, 0],  "size": [1.5, 1.5, 10] },
+    { "pos": [14, 0.75, 0],   "size": [1.5, 1.5, 10] },
+    { "pos": [-6, 0.75, 6],   "size": [2, 1.5, 2] },
+    { "pos": [6, 0.75, -6],   "size": [2, 1.5, 2] }
+  ],
+  "spawns": [
+    [-24, 1.7, -24],
+    [24, 1.7, 24],
+    [24, 1.7, -24],
+    [-24, 1.7, 24],
+    [0, 1.7, -24],
+    [0, 1.7, 24]
+  ],
+  "pickups": [
+    { "id": "heal_tours_1", "type": "heal", "pos": [0, 1.7, 0],   "healAmount": 35 },
+    { "id": "heal_tours_2", "type": "heal", "pos": [-9, 1.7, 9],  "healAmount": 35 },
+    { "id": "heal_tours_3", "type": "heal", "pos": [9, 1.7, -9],  "healAmount": 35 }
+  ]
+}

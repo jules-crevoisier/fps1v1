@@ -1,0 +1,21 @@
+# Déploiement Render (https://render.com) — serveur Node autoritaire (Express + Socket.IO).
+# Sert AUSSI le client statique (public/), donc solo ET online sur une seule URL.
+#
+# Mise en route :
+#   1. Pousser ce repo sur GitHub (fait).
+#   2. Render → New → Blueprint → sélectionner ce repo → il lit ce fichier.
+#   3. Déployer. L'URL publique (https://arena-duel.onrender.com) sert le jeu.
+#      Le client se connecte au serveur en same-origin (io()), rien à configurer.
+services:
+  - type: web
+    name: arena-duel
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      # Render fournit PORT automatiquement ; on force l'écoute sur toutes les interfaces.
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "22"

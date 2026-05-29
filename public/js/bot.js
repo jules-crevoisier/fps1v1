@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SETTINGS, WEAPONS } from "./config.js";
+import { sampleTerrainHeight } from "./terrain.js";
 
 // IA d'entraînement : pilote un Avatar. Approche, garde ses distances, strafe, tire en ligne de vue.
 export class Bot {
@@ -22,9 +23,10 @@ export class Bot {
 
   spawn(pos) {
     this.pos.copy(pos);
-    this.pos.y = SETTINGS.playerHeight;
+    // yeux = sol (terrain) + hauteur du joueur → le bot repose sur le relief.
+    this.pos.y = sampleTerrainHeight(this.env.terrain, pos.x, pos.z) + SETTINGS.playerHeight;
     this.vel.set(0, 0, 0);
-    this.av.respawn(pos, this.av.maxHealth);
+    this.av.respawn({ x: pos.x, y: this.pos.y, z: pos.z }, this.av.maxHealth);
   }
 
   update(dt, targetPos, targetAlive) {
@@ -78,6 +80,8 @@ export class Bot {
     const lim = SETTINGS.arenaSize / 2 - 2;
     this.pos.x = Math.max(-lim, Math.min(lim, this.pos.x));
     this.pos.z = Math.max(-lim, Math.min(lim, this.pos.z));
+    // suit le relief du terrain sous lui
+    this.pos.y = sampleTerrainHeight(this.env.terrain, this.pos.x, this.pos.z) + SETTINGS.playerHeight;
 
     this.av.setPosition(this.pos.x, this.pos.y, this.pos.z);
     this.av.setYaw(this.yaw + Math.PI);

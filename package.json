@@ -3,12 +3,51 @@
   "version": "0.1.0",
   "description": "1v1 FPS arena duel - esport oriented, Apex-like movement",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js --host"
+    "dev": "node server.js --host",
+    "app:dev": "electron .",
+    "app:build": "electron-builder --win nsis portable"
   },
   "dependencies": {
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
+  },
+  "optionalDependencies": {
+    "steamworks.js": "^0.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/oswald": "^5.2.8",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "three": "0.160.0"
+  },
+  "build": {
+    "appId": "com.arenaduel.game",
+    "productName": "Arena Duel",
+    "files": [
+      "electron/**",
+      "server.js",
+      "public/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/steamworks.js/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

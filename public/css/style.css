@@ -259,6 +259,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 /* ===================== HUD ===================== */
 #hud { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
 
+/* ---- Compteur FPS (optionnel) ---- */
+#fps { position: absolute; top: 10px; left: 12px; z-index: 7; font-family: var(--font-d); font-size: 13px; letter-spacing: 1px; color: var(--accent); background: rgba(0,0,0,0.35); padding: 3px 8px; font-variant-numeric: tabular-nums; }
+
 #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 22px; height: 22px; }
 .ch { position: absolute; background: var(--accent); opacity: 0.95; }
 .ch-t, .ch-b { left: 50%; width: 2px; height: 6px; transform: translateX(-50%); }

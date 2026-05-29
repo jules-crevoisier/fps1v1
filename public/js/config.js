@@ -1,4 +1,12 @@
-// Données de jeu : classes, armes, réglages d'arène.
+// Données de jeu : classes, armes, réglages d'arène + persistance utilisateur/profil.
+// Les ARMES sont chargées depuis public/data/weapons.json (source de vérité unique,
+// partagée avec le serveur). USER/PROFILE passent par la couche storage.js
+// (fichiers en Electron, localStorage en web), versionnés et validés.
+
+import { loadRaw, saveRaw } from "./storage.js";
+
+// Version du schéma de données persistées (incrémentée lors d'une migration).
+export const DATA_VERSION = 1;
 
 export const SETTINGS = {
   scoreToWin: 7,        // premier à 7 frags gagne
@@ -6,8 +14,12 @@ export const SETTINGS = {
   gravity: 22,
   moveSpeed: 6.2,
   sprintMult: 1.55,
-  slideBoost: 11,       // vitesse initiale d'un slide
-  slideFriction: 7,
+  slideSpeedMult: 1.45, // vitesse de départ du slide = vitesse de sprint × ce facteur (burst COD)
+  slideDuration: 0.62,  // durée fixe d'un slide (s) — on ne peut PAS le prolonger
+  slideEndSpeedMult: 0.55, // vitesse en fin de slide relative au sprint (puis crouch-walk)
+  slideMinSpeedMult: 0.85, // il faut être lancé (≈ sprint) pour déclencher un slide
+  slideCooldown: 0.35,  // délai avant de pouvoir re-slider
+  slideSteer: 2.5,      // capacité à infléchir la trajectoire pendant le slide (faible)
   jumpForce: 8.2,
   airControl: 0.35,
   mouseSensitivity: 0.0022,
@@ -16,23 +28,53 @@ export const SETTINGS = {
   arenaSize: 60,
 };
 
-// Armes : slot (primary/secondary), dégâts, cadence (tirs/s), chargeur, recharge,
-// dispersion, auto/semi, portée. recoil = kick vertical ; recoilH = horizontal ; shake = screenshake.
-// pellets = projectiles par tir (shotgun). color = teinte de base du tracer.
-// unlock = niveau JOUEUR requis pour débloquer l'arme.
-export const WEAPONS = {
-  // --- Primaires ---
-  rifle:   { name: "Fusil d'assaut", slot: "primary", unlock: 1, damage: 22, fireRate: 9,  mag: 30, reload: 2.0, spread: 0.008, auto: true,  range: 200, color: 0xff9e2c, recoil: 0.013, recoilH: 0.5, shake: 0.05 },
-  smg:     { name: "SMG",            slot: "primary", unlock: 1, damage: 14, fireRate: 15, mag: 28, reload: 1.6, spread: 0.016, auto: true,  range: 120, color: 0xffc14d, recoil: 0.008, recoilH: 0.7, shake: 0.035 },
-  sniper:  { name: "Sniper",         slot: "primary", unlock: 2, damage: 90, fireRate: 1.1,mag: 5,  reload: 2.8, spread: 0.001, auto: false, range: 400, color: 0xffd27a, headshotMult: 2.0, recoil: 0.08, recoilH: 0.2, shake: 0.2 },
-  shotgun: { name: "Fusil à pompe",  slot: "primary", unlock: 3, damage: 11, fireRate: 1.4,mag: 6,  reload: 2.4, spread: 0.05,  auto: false, range: 28,  color: 0xff7b3d, pellets: 9, recoil: 0.05, recoilH: 0.6, shake: 0.16 },
-  dmr:     { name: "Tireur d'élite", slot: "primary", unlock: 4, damage: 48, fireRate: 3.5,mag: 12, reload: 2.2, spread: 0.004, auto: false, range: 300, color: 0xffb347, headshotMult: 1.7, recoil: 0.035, recoilH: 0.3, shake: 0.1 },
-  lmg:     { name: "Mitrailleuse",   slot: "primary", unlock: 6, damage: 20, fireRate: 11, mag: 60, reload: 3.4, spread: 0.02,  auto: true,  range: 180, color: 0xffa64d, recoil: 0.016, recoilH: 0.8, shake: 0.06 },
-  // --- Secondaires ---
-  pistol:  { name: "Pistolet",       slot: "secondary", unlock: 1, damage: 28, fireRate: 4,  mag: 12, reload: 1.4, spread: 0.012, auto: false, range: 100, color: 0x9aa0aa, recoil: 0.022, recoilH: 0.4, shake: 0.06 },
-  machpist:{ name: "Pistolet-auto",  slot: "secondary", unlock: 2, damage: 13, fireRate: 16, mag: 20, reload: 1.5, spread: 0.03,  auto: true,  range: 70,  color: 0xb0b6c0, recoil: 0.01,  recoilH: 0.9, shake: 0.03 },
-  revolver:{ name: "Revolver",       slot: "secondary", unlock: 5, damage: 55, fireRate: 2,  mag: 6,  reload: 1.9, spread: 0.006, auto: false, range: 140, color: 0xc0c6d0, headshotMult: 1.6, recoil: 0.05, recoilH: 0.3, shake: 0.12 },
-};
+// ---- Armes : remplies par loadWeapons() depuis data/weapons.json ----
+// La référence d'objet reste stable (remplie par mutation) pour les modules
+// qui l'importent au chargement.
+export const WEAPONS = {};
+
+const hexToInt = (c) => (typeof c === "string" ? parseInt(c.replace("#", ""), 16) : c);
+
+const intToHex = (n) => (typeof n === "number" ? "#" + (n & 0xffffff).toString(16).padStart(6, "0") : n);
+
+/**
+ * Applique un objet de données d'armes (format weapons.json) dans WEAPONS,
+ * en place (référence stable). Utilisé au boot et par l'éditeur d'armes (live).
+ * @param {{ weapons?: Record<string, object> }} json
+ * @returns {boolean} true si appliqué
+ */
+export function applyWeaponsData(json) {
+  const defs = json && json.weapons;
+  if (!defs || typeof defs !== "object") return false;
+  for (const id of Object.keys(WEAPONS)) delete WEAPONS[id];
+  for (const [id, def] of Object.entries(defs)) {
+    WEAPONS[id] = { ...def, color: hexToInt(def.color) };
+  }
+  return true;
+}
+
+/**
+ * Sérialise WEAPONS au format weapons.json (couleurs en chaînes #rrggbb).
+ * @returns {{ version: number, weapons: Record<string, object> }}
+ */
+export function serializeWeapons() {
+  const weapons = {};
+  for (const [id, w] of Object.entries(WEAPONS)) {
+    weapons[id] = { ...w, color: intToHex(w.color) };
+  }
+  return { version: 1, weapons };
+}
+
+async function loadWeapons() {
+  try {
+    const res = await fetch("data/weapons.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!applyWeaponsData(json)) throw new Error("format weapons.json invalide");
+  } catch (e) {
+    console.error("[config] chargement des armes impossible :", e);
+  }
+}
 
 // Skins cosmétiques universels (teinte du tracer + viewmodel). unlock = niveau requis.
 export const SKINS = {
@@ -45,15 +87,35 @@ export const SKINS = {
   gold:    { name: "Or",       tint: 0xffd24a, rarity: "legendary", unlock: 10 },
 };
 
-// Réglages utilisateur persistés (sensibilité, FOV).
-const DEFAULT_USER = { sensitivity: 1.0, fov: 90 };
+// ---- Presets de qualité graphique (pilote le rendu, voir main.js) ----
+export const QUALITY_PRESETS = {
+  low:    { label: "Bas",   pixelRatio: 1,   shadows: false, shadowMapSize: 1024, antialias: false },
+  medium: { label: "Moyen", pixelRatio: 1.5, shadows: true,  shadowMapSize: 1024, antialias: true },
+  high:   { label: "Élevé", pixelRatio: 2,   shadows: true,  shadowMapSize: 2048, antialias: true },
+};
+const FPS_CAPS = [0, 30, 60, 120, 144, 240];
+
+// ---- Réglages utilisateur persistés ----
+const DEFAULT_USER = { version: DATA_VERSION, sensitivity: 1.0, fov: 90, quality: "high", fpsCap: 0, showFps: false };
 export const USER = { ...DEFAULT_USER };
-try {
-  const saved = JSON.parse(localStorage.getItem("arena_settings") || "{}");
-  Object.assign(USER, saved);
-} catch {}
+
+const isFiniteNum = (v) => typeof v === "number" && Number.isFinite(v);
+const num = (v, def) => (isFiniteNum(v) ? v : def);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function applyUser(saved) {
+  const o = saved && typeof saved === "object" ? saved : {};
+  USER.sensitivity = clamp(num(o.sensitivity, DEFAULT_USER.sensitivity), 0.2, 3);
+  USER.fov = clamp(Math.round(num(o.fov, DEFAULT_USER.fov)), 70, 110);
+  USER.quality = QUALITY_PRESETS[o.quality] ? o.quality : DEFAULT_USER.quality;
+  USER.fpsCap = FPS_CAPS.includes(o.fpsCap) ? o.fpsCap : DEFAULT_USER.fpsCap;
+  USER.showFps = typeof o.showFps === "boolean" ? o.showFps : DEFAULT_USER.showFps;
+  USER.version = DATA_VERSION;
+}
+
 export function saveUser() {
-  try { localStorage.setItem("arena_settings", JSON.stringify(USER)); } catch {}
+  USER.version = DATA_VERSION;
+  saveRaw("settings", USER);
 }
 
 // Classes : 2 armes + modificateurs
@@ -82,6 +144,7 @@ export const GAMEMODES = {
 
 // ---- Profil joueur persistant (loadout, skins, stats, progression) ----
 const DEFAULT_PROFILE = {
+  version: DATA_VERSION,
   pseudo: "Joueur" + Math.floor(Math.random() * 1000),
   loadout: { classId: "assault", primary: "rifle", secondary: "pistol" },
   mode: "duel",
@@ -93,10 +156,48 @@ const DEFAULT_PROFILE = {
   xp: 0,                // xp joueur (débloque les armes)
 };
 export const PROFILE = JSON.parse(JSON.stringify(DEFAULT_PROFILE));
-try { Object.assign(PROFILE, JSON.parse(localStorage.getItem("arena_profile") || "{}")); } catch {}
-export function saveProfile() {
-  try { localStorage.setItem("arena_profile", JSON.stringify(PROFILE)); } catch {}
+
+function applyProfile(saved) {
+  const o = saved && typeof saved === "object" ? saved : {};
+  if (typeof o.pseudo === "string" && o.pseudo.trim()) PROFILE.pseudo = o.pseudo.slice(0, 16);
+  if (o.loadout && typeof o.loadout === "object") {
+    if (CLASSES[o.loadout.classId]) PROFILE.loadout.classId = o.loadout.classId;
+    if (WEAPONS[o.loadout.primary]) PROFILE.loadout.primary = o.loadout.primary;
+    if (WEAPONS[o.loadout.secondary]) PROFILE.loadout.secondary = o.loadout.secondary;
+  }
+  if (GAMEMODES[o.mode]) PROFILE.mode = o.mode;
+  if (typeof o.map === "string") PROFILE.map = o.map;
+  if (isFiniteNum(o.botDiff)) PROFILE.botDiff = o.botDiff;
+  if (o.skins && typeof o.skins === "object") PROFILE.skins = { ...o.skins };
+  if (o.weaponXp && typeof o.weaponXp === "object") PROFILE.weaponXp = { ...o.weaponXp };
+  if (o.stats && typeof o.stats === "object") {
+    PROFILE.stats = {
+      games: Math.max(0, num(o.stats.games, 0)),
+      wins: Math.max(0, num(o.stats.wins, 0)),
+      kills: Math.max(0, num(o.stats.kills, 0)),
+      deaths: Math.max(0, num(o.stats.deaths, 0)),
+    };
+  }
+  if (isFiniteNum(o.xp)) PROFILE.xp = Math.max(0, o.xp);
+  PROFILE.version = DATA_VERSION;
 }
+
+export function saveProfile() {
+  PROFILE.version = DATA_VERSION;
+  saveRaw("profile", PROFILE);
+}
+
+/**
+ * Charge toutes les données nécessaires avant le démarrage de l'UI :
+ * armes (JSON), réglages et profil (storage). À appeler une fois au boot.
+ */
+export async function loadAllData() {
+  await loadWeapons();
+  const [savedUser, savedProfile] = await Promise.all([loadRaw("settings"), loadRaw("profile")]);
+  applyUser(savedUser);
+  applyProfile(savedProfile);
+}
+
 export function levelFromXp(xp) { return Math.floor(Math.sqrt(xp / 100)) + 1; }
 export function xpForLevel(lvl) { return (lvl - 1) * (lvl - 1) * 100; }   // xp cumulé requis
 export function skinOf(weaponId) { return PROFILE.skins[weaponId] || "default"; }
@@ -104,10 +205,10 @@ export function skinOf(weaponId) { return PROFILE.skins[weaponId] || "default"; 
 export function playerLevel() { return levelFromXp(PROFILE.xp); }
 export function weaponXpOf(id) { return PROFILE.weaponXp[id] || 0; }
 export function weaponLevel(id) { return levelFromXp(weaponXpOf(id)); }
-export function weaponUnlocked(id) { return playerLevel() >= (WEAPONS[id].unlock || 1); }
+export function weaponUnlocked(id) { return playerLevel() >= (WEAPONS[id]?.unlock || 1); }
 // Un skin se débloque par le NIVEAU DE L'ARME ciblée.
 export function skinUnlocked(skinId, weaponId) { return weaponLevel(weaponId) >= (SKINS[skinId].unlock || 1); }
 export function weaponColor(weaponId) {
   const s = SKINS[skinOf(weaponId)];
-  return (s && s.tint != null) ? s.tint : WEAPONS[weaponId].color;
+  return (s && s.tint != null) ? s.tint : WEAPONS[weaponId]?.color;
 }

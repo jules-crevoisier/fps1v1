@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "note": "API Names des succès Steam. À déclarer à l'identique dans le backend Steamworks (avec le vrai AppID). Avec l'AppID de test 480, l'appel ActivateAchievement fonctionne mais n'affiche rien (succès non déclarés) — c'est attendu.",
+  "achievements": [
+    { "id": "ACH_FIRST_WIN",      "name": "Premier sang",        "desc": "Remporter votre première partie." },
+    { "id": "ACH_WIN_10",         "name": "Vétéran de l'arène",  "desc": "Remporter 10 parties au total." },
+    { "id": "ACH_KILLS_100",      "name": "Centurion",           "desc": "Éliminer 100 adversaires au total." },
+    { "id": "ACH_FIRST_HEADSHOT", "name": "Pile entre les yeux", "desc": "Réussir votre premier headshot." },
+    { "id": "ACH_LEVEL_5",        "name": "Montée en puissance", "desc": "Atteindre le niveau 5." },
+    { "id": "ACH_FLAWLESS",       "name": "Sans une éraflure",   "desc": "Gagner une partie sans mourir une seule fois." },
+    { "id": "ACH_EDITOR_SAVE",    "name": "Architecte",          "desc": "Créer et sauvegarder une carte dans l'éditeur." },
+    { "id": "ACH_EDITOR_TEST",    "name": "Banc d'essai",        "desc": "Tester une de vos cartes dans l'éditeur." }
+  ]
+}

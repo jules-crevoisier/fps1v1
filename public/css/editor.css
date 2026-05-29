@@ -1,0 +1,155 @@
+/* =========================================================
+   ARENA DUEL — Éditeur intégré (cartes + armes)
+   Réutilise les variables de thème de style.css (anthracite + ambre).
+   ========================================================= */
+
+/* Conteneur transparent : laisse passer les interactions vers le canvas 3D
+   (orbite/sélection) ; seuls les panneaux capturent la souris. */
+.ed-root { position: fixed; inset: 0; z-index: 30; pointer-events: none; font-family: var(--font-b); }
+.ed-root > * { pointer-events: auto; }
+.ed-root .ed-hint, .ed-root .ed-toast { pointer-events: none; }
+
+.ed-brand {
+  font-family: var(--font-d); font-weight: 700; letter-spacing: 2px;
+  font-size: 18px; color: var(--txt); text-transform: uppercase; white-space: nowrap;
+}
+.ed-brand span { color: var(--accent); }
+
+/* ---- Barre d'outils (haut) ---- */
+.ed-toolbar {
+  position: absolute; top: 0; left: 0; right: 0; height: 52px;
+  display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.ed-group { display: flex; align-items: center; gap: 6px; padding-right: 14px; border-right: 1px solid var(--line); }
+.ed-group:last-child { border-right: none; }
+.ed-inline { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+/* ---- Panneaux latéraux ---- */
+.ed-left, .ed-right {
+  position: absolute; top: 52px; bottom: 54px;
+  width: 248px; background: var(--panel); padding: 12px;
+  display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+}
+.ed-left { left: 0; border-right: 1px solid var(--line); }
+.ed-right { right: 0; border-left: 1px solid var(--line); }
+
+.ed-section-title { font-family: var(--font-d); letter-spacing: 2px; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.ed-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---- Liste d'objets / d'armes ---- */
+.ed-list { display: flex; flex-direction: column; gap: 3px; min-height: 40px; }
+.ed-list-item {
+  padding: 7px 9px; background: var(--surface); border: 1px solid var(--line);
+  font-size: 12.5px; color: var(--txt); cursor: pointer; border-left: 3px solid transparent;
+}
+.ed-list-item small { color: var(--muted2); }
+.ed-list-item:hover { background: var(--surface2); }
+.ed-list-item.active { border-left-color: var(--accent); background: var(--surface2); }
+.ed-group-head {
+  padding: 6px 8px; margin-top: 4px; cursor: pointer; user-select: none;
+  font-family: var(--font-d); font-size: 12px; letter-spacing: .6px; text-transform: uppercase;
+  color: var(--muted2); background: var(--surface2); border: 1px solid var(--line);
+}
+.ed-group-head:hover { color: var(--txt); }
+
+/* ---- Propriétés ---- */
+.ed-props { display: flex; flex-direction: column; gap: 7px; }
+.ed-prop-head { font-family: var(--font-d); color: var(--accent); letter-spacing: 1px; font-size: 14px; text-transform: uppercase; }
+.ed-prop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ed-prop-row > label { color: var(--muted); font-size: 12px; flex: 1; }
+.ed-prop-note { color: var(--muted2); font-size: 11px; line-height: 1.4; margin-top: 4px; }
+.ed-num3 { display: flex; gap: 4px; }
+
+/* ---- Champs ---- */
+.ed-num, .ed-text, .ed-select {
+  background: var(--surface); border: 1px solid var(--line); color: var(--txt);
+  font-family: var(--font-b); font-size: 12px; padding: 5px 7px; outline: none;
+}
+.ed-num { width: 56px; }
+.ed-num.wide { width: 90px; }
+.ed-text { width: 130px; }
+.ed-select { width: 100%; }
+.ed-num:focus, .ed-text:focus, .ed-select:focus { border-color: var(--accent); }
+.ed-color { width: 38px; height: 26px; padding: 0; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+
+/* ---- Boutons ---- */
+.ed-btn {
+  background: var(--surface); border: 1px solid var(--line2); color: var(--txt);
+  font-family: var(--font-d); letter-spacing: 1px; text-transform: uppercase;
+  font-size: 12px; padding: 7px 12px; cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.ed-btn:hover { background: var(--surface2); border-color: var(--accent); }
+.ed-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.ed-btn.sm { padding: 5px 9px; font-size: 11px; flex: 1; }
+.ed-btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.ed-btn.primary:hover { background: var(--accent-d); }
+.ed-btn.ghost { background: transparent; }
+.ed-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ---- Barre du bas ---- */
+.ed-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 54px;
+  display: flex; align-items: center; gap: 10px; padding: 0 16px;
+  background: var(--panel); border-top: 1px solid var(--line);
+}
+
+.ed-hint {
+  position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+  color: var(--muted2); font-size: 11px; background: rgba(13,14,16,.7); padding: 4px 10px;
+}
+.ed-toast {
+  position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+  background: var(--surface2); border: 1px solid var(--accent); color: var(--txt);
+  padding: 9px 16px; font-size: 13px; max-width: 70vw; text-align: center;
+}
+
+/* =========================================================
+   Éditeur d'armes (modale plein écran au-dessus de l'éditeur)
+   ========================================================= */
+.we-root {
+  position: fixed; inset: 0; z-index: 40; background: rgba(8,9,11,.92);
+  display: grid; grid-template-columns: 260px 1fr;
+  grid-template-rows: 56px 1fr 54px; grid-template-areas: "title title" "left right" "bar bar";
+  gap: 0; font-family: var(--font-b);
+}
+.we-title { grid-area: title; display: flex; align-items: center; padding: 0 20px; border-bottom: 1px solid var(--line); }
+.we-left { grid-area: left; padding: 14px; overflow-y: auto; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.we-right { grid-area: right; padding: 14px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.we-root .ed-bottom { position: static; grid-area: bar; }
+.we-row { gap: 10px; }
+.we-row > label { flex: 0 0 130px; }
+.we-slider { flex: 1; accent-color: var(--accent); }
+
+/* ===== Fenetre animateur (timeline + keyframes) ===== */
+.an-root {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+  width: min(720px, 94vw); z-index: 60; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  font-family: var(--font-b); color: var(--txt); box-shadow: 0 8px 30px rgba(0,0,0,.5);
+}
+.an-root.hidden { display: none; }
+.an-head { display: flex; align-items: center; justify-content: space-between; }
+.an-title { font-family: var(--font-d); letter-spacing: 1px; color: var(--accent); font-size: 13px; }
+.an-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.an-time { font-variant-numeric: tabular-nums; color: var(--muted2); min-width: 54px; }
+.an-inline { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.an-sel { background: var(--surface2); color: var(--txt); border: 1px solid var(--line); padding: 3px 6px; font-size: 12px; }
+.an-tracklabel { font-size: 11px; color: var(--muted2); }
+.an-track { position: relative; height: 34px; background: var(--surface2); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.an-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; }
+.an-dots { position: absolute; inset: 0; }
+.an-dot { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #cfd6e0; border: 2px solid #11151c; cursor: pointer; }
+.an-dot.sel { background: var(--accent); }
+.an-keyed { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.an-keytitle { font-size: 12px; color: var(--muted2); }
+.an-prop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.an-prop > label { font-size: 12px; color: var(--muted); flex: 1; }
+.we-previewwrap { display: flex; flex-direction: column; gap: 6px; }
+.we-preview { width: 100%; height: 280px; display: block; background: #0d1016; border: 1px solid var(--line); border-radius: 6px; cursor: grab; touch-action: none; }
+.we-preview:active { cursor: grabbing; }
+.we-tabs { display: flex; gap: 6px; margin-bottom: 4px; }
+.we-pane { display: flex; flex-direction: column; gap: 8px; }
+.we-pane.hidden { display: none; }

@@ -33,9 +33,14 @@ export class UI {
       scope: document.getElementById("scope"),
       crosshair: document.getElementById("crosshair"),
       dmgFlash: document.getElementById("dmg-flash"),
+      fps: document.getElementById("fps"),
     };
     this._scoped = false;
   }
+
+  // Compteur FPS optionnel.
+  showFps(on) { this.el.fps.classList.toggle("hidden", !on); }
+  setFps(v) { this.el.fps.textContent = `${v} FPS`; }
 
   flashDamage() {
     const f = this.el.dmgFlash;

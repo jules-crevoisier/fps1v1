@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SETTINGS, WEAPONS, CLASSES, USER } from "./config.js";
+import { sampleTerrainHeight } from "./terrain.js";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -18,6 +19,9 @@ export class Player {
     this.onGround = false;
     this.sliding = false;
     this.slideTimer = 0;
+    this.slideStartSpeed = 0;  // vitesse au déclenchement (pour la décroissance)
+    this.slideCd = 0;          // cooldown avant re-slide
+    this.slideKeyWasDown = false; // détection de front montant (re-presser pour re-slider)
     this.height = SETTINGS.playerHeight;
 
     this.fireCd = 0;
@@ -52,7 +56,8 @@ export class Player {
     this.yaw = yaw; this.pitch = 0;
     this.health = this.maxHealth;
     this.alive = true;
-    this.sliding = false; this.height = SETTINGS.playerHeight;
+    this.sliding = false; this.slideCd = 0; this.slideKeyWasDown = false;
+    this.height = SETTINGS.playerHeight;
     this.weapons.forEach((w) => { w.ammo = WEAPONS[w.id].mag; w.reloading = false; w.reloadT = 0; });
   }
 
@@ -148,23 +153,52 @@ export class Player {
     const walking = input.down("AltLeft") || input.down("AltRight");
     const wantSlide = input.down("ControlLeft") || input.down("KeyC");
 
+    const sprintSpeed = SETTINGS.moveSpeed * this.cls.speedMult * SETTINGS.sprintMult;
     let speed = SETTINGS.moveSpeed * this.cls.speedMult * (walking ? 0.5 : SETTINGS.sprintMult);
 
-    // --- Slide --- (en course, pas en marche)
-    if (this.onGround && wantSlide && !walking && !this.sliding && wish.lengthSq() > 0) {
+    if (this.slideCd > 0) this.slideCd -= dt;
+
+    // --- Slide façon COD ---
+    // Déclenché sur un FRONT MONTANT de la touche (re-presser pour re-slider),
+    // uniquement lancé (≈ sprint), au sol, sans cooldown actif. On ne peut pas le
+    // prolonger en maintenant la touche : sa durée est fixe.
+    const slideKeyPressed = wantSlide && !this.slideKeyWasDown; // front montant
+    const horizSpeed = Math.hypot(this.vel.x, this.vel.z);
+    const canSlide =
+      this.onGround && !walking && !this.sliding && this.slideCd <= 0 &&
+      wish.lengthSq() > 0 && horizSpeed >= sprintSpeed * SETTINGS.slideMinSpeedMult;
+
+    if (slideKeyPressed && canSlide) {
       this.sliding = true;
-      this.slideTimer = 0.9;
-      // impulsion dans la direction du mouvement
-      this.vel.x = wish.x * SETTINGS.slideBoost;
-      this.vel.z = wish.z * SETTINGS.slideBoost;
+      this.slideTimer = SETTINGS.slideDuration;
+      // burst : direction de la visée si on pousse vers l'avant, sinon direction du wish
+      const dir = wish.clone().normalize();
+      this.slideStartSpeed = sprintSpeed * SETTINGS.slideSpeedMult;
+      this.vel.x = dir.x * this.slideStartSpeed;
+      this.vel.z = dir.z * this.slideStartSpeed;
     }
+
     if (this.sliding) {
       this.slideTimer -= dt;
-      // friction
-      const f = Math.max(0, 1 - SETTINGS.slideFriction * dt / 11);
-      this.vel.x *= f; this.vel.z *= f;
+      // Décroissance lissée du burst vers la vitesse de fin (puis crouch-walk).
+      const endSpeed = sprintSpeed * SETTINGS.slideEndSpeedMult;
+      const t = Math.max(0, this.slideTimer / SETTINGS.slideDuration); // 1 → 0
+      const targetSpeed = endSpeed + (this.slideStartSpeed - endSpeed) * (t * t); // ease-out
+      const cur = Math.hypot(this.vel.x, this.vel.z) || 1;
+      const dirX = this.vel.x / cur, dirZ = this.vel.z / cur;
+      // léger contrôle directionnel (steer) sans relancer la vitesse
+      this.vel.x += wish.x * SETTINGS.slideSteer * dt;
+      this.vel.z += wish.z * SETTINGS.slideSteer * dt;
+      const cur2 = Math.hypot(this.vel.x, this.vel.z) || 1;
+      this.vel.x = (this.vel.x / cur2) * targetSpeed;
+      this.vel.z = (this.vel.z / cur2) * targetSpeed;
       this.height += (SETTINGS.crouchHeight - this.height) * Math.min(1, dt * 12);
-      if (this.slideTimer <= 0 || !wantSlide || !this.onGround) this.sliding = false;
+      // Fin : durée écoulée, en l'air. Relâcher/maintenir n'y change rien,
+      // mais relâcher tôt coupe le slide (annulation volontaire).
+      if (this.slideTimer <= 0 || !this.onGround || !wantSlide) {
+        this.sliding = false;
+        this.slideCd = SETTINGS.slideCooldown;
+      }
     } else {
       this.height += (SETTINGS.playerHeight - this.height) * Math.min(1, dt * 12);
       // contrôle au sol vs en l'air
@@ -178,7 +212,7 @@ export class Player {
     if ((input.down("Space")) && this.onGround) {
       this.vel.y = SETTINGS.jumpForce;
       this.onGround = false;
-      this.sliding = false;
+      if (this.sliding) { this.sliding = false; this.slideCd = SETTINGS.slideCooldown; }
     }
     this.vel.y -= SETTINGS.gravity * dt;
 
@@ -186,15 +220,23 @@ export class Player {
     this._integrateAxis("x", this.vel.x * dt, env.colliders);
     this._integrateAxis("z", this.vel.z * dt, env.colliders);
 
-    // Vertical
+    // Vertical — le sol suit le terrain (heightmap) sous le joueur ; yeux = sol + hauteur.
+    const ground = sampleTerrainHeight(env.terrain, this.pos.x, this.pos.z);
+    const floorEye = ground + this.height;
     this.pos.y += this.vel.y * dt;
-    if (this.pos.y <= this.height) {
-      this.pos.y = this.height;
+    // Au sol et en chute : la caméra (yeux = pos.y) suit la hauteur courante,
+    // qui s'abaisse pendant le slide → vraie descente fluide de la vue.
+    if (this.onGround && this.vel.y <= 0) this.pos.y = floorEye;
+    if (this.pos.y <= floorEye) {
+      this.pos.y = floorEye;
       this.vel.y = 0;
       this.onGround = true;
     } else {
       this.onGround = false;
     }
+
+    // Mémorise l'état de la touche slide pour la détection de front montant.
+    this.slideKeyWasDown = wantSlide;
   }
 
   _integrateAxis(axis, delta, colliders) {
@@ -252,11 +294,9 @@ export class Player {
     ws.ammo--;
     this.fireCd = 1 / w.fireRate;
 
-    // Kick de recul : vertical franc + horizontal aléatoire + screenshake
-    this.recoilPitch += w.recoil;
-    this.recoilYaw += (Math.random() - 0.5) * w.recoil * (w.recoilH || 0.5);
-    this.shake = Math.min(0.25, this.shake + (w.shake || 0.05));
-
+    // IMPORTANT : la balle part à la visée ACTUELLE (le curseur). Le kick de recul
+    // est appliqué APRÈS le tir → il décale la vue pour les tirs suivants, pas
+    // celui-ci. (Sinon la 1re balle est déviée et le curseur ne sert à rien.)
     const base = this._lookDir();
     const origin = this.pos.clone();
     if (this.onFire) this.onFire(origin, base, w);   // 1× par tir (réseau / son / muzzle)
@@ -270,5 +310,10 @@ export class Player {
       dir.normalize();
       if (this.onShoot) this.onShoot(origin, dir, w);
     }
+
+    // Kick de recul (après le tir) : vertical franc + horizontal aléatoire + screenshake
+    this.recoilPitch += w.recoil;
+    this.recoilYaw += (Math.random() - 0.5) * w.recoil * (w.recoilH || 0.5);
+    this.shake = Math.min(0.25, this.shake + (w.shake || 0.05));
   }
 }

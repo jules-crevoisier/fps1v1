@@ -5,6 +5,7 @@
 import express from "express";
 import http from "http";
 import os from "os";
+import fs from "fs";
 import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -15,18 +16,49 @@ const server = http.createServer(app);
 const io = new Server(server);
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- Règles autoritaires (dupliquées du client, source de vérité) ---
-const WEAPONS = {
-  rifle:   { damage: 22, fireRate: 9,  range: 200 },
-  smg:     { damage: 14, fireRate: 15, range: 120 },
-  sniper:  { damage: 90, fireRate: 1.1, range: 400, headshotMult: 2.0 },
-  shotgun: { damage: 11, fireRate: 1.4, range: 28, pellets: 9 },
-  dmr:     { damage: 48, fireRate: 3.5, range: 300, headshotMult: 1.7 },
-  lmg:     { damage: 20, fireRate: 11, range: 180 },
-  pistol:  { damage: 28, fireRate: 4,  range: 100 },
-  machpist:{ damage: 13, fireRate: 16, range: 70 },
-  revolver:{ damage: 55, fireRate: 2,  range: 140, headshotMult: 1.6 },
-};
+// --- Source de vérité PARTAGÉE client/serveur : données JSON ---
+// Le serveur lit les mêmes fichiers que le client pour éviter toute divergence
+// des stats d'armes ou des positions de pickups.
+function readJson(relPath) {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, relPath), "utf8"));
+}
+
+// Armes : on ne garde côté serveur que ce qui sert à la résolution autoritaire.
+const WEAPONS = {};
+try {
+  const weaponsData = readJson("public/data/weapons.json");
+  for (const [id, w] of Object.entries(weaponsData.weapons || {})) {
+    WEAPONS[id] = { damage: w.damage, fireRate: w.fireRate, range: w.range };
+    if (w.headshotMult != null) WEAPONS[id].headshotMult = w.headshotMult;
+    if (w.pellets != null) WEAPONS[id].pellets = w.pellets;
+  }
+} catch (e) {
+  console.error("[server] Impossible de charger public/data/weapons.json :", e.message);
+}
+
+// Cartes : chargées dynamiquement depuis public/data/maps/ (toute carte publiée
+// par l'éditeur devient jouable en ligne après un redémarrage du serveur).
+const MAP_DATA = {};
+function loadMapsFromDisk() {
+  for (const k of Object.keys(MAP_DATA)) delete MAP_DATA[k];
+  const dir = path.join(__dirname, "public/data/maps");
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".json")); }
+  catch (e) { console.error("[server] Lecture du dossier des cartes impossible :", e.message); }
+  for (const f of files) {
+    try {
+      const m = readJson(`public/data/maps/${f}`);
+      const id = m.id || f.replace(/\.json$/, "");
+      if (/^[a-z0-9_]+$/.test(id)) MAP_DATA[id] = m;
+      else console.error(`[server] Carte ignorée (id invalide) : ${f}`);
+    } catch (e) {
+      console.error(`[server] Impossible de charger la carte ${f} :`, e.message);
+    }
+  }
+  console.log(`[server] Cartes chargées : ${Object.keys(MAP_DATA).join(", ") || "(aucune)"}`);
+}
+loadMapsFromDisk();
+
 const CLASS_HP = { assault: 100, scout: 80, tank: 90 };
 const SCORE_TO_WIN = 7;
 const ROUND_INVULN_MS = 2300;
@@ -36,7 +68,7 @@ const ARENA_LIMIT = 29;                  // demi-taille d'arène (anti out-of-bo
 const VALID_LOADOUT = (l) => Array.isArray(l) && l.length && l.every((w) => WEAPONS[w]);
 const fin = (n) => typeof n === "number" && Number.isFinite(n);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const VALID_MAP = (m) => m === "arena" || m === "tours";
+const VALID_MAP = (m) => Object.prototype.hasOwnProperty.call(MAP_DATA, m);
 
 const HEAL_AMOUNT = 35;
 const HEAL_RESPAWN_MS = 10_000;
@@ -56,23 +88,17 @@ function newPlayer(id, side, pseudo, classId, loadout) {
 }
 
 function makeHealPickupsForMap(mapId) {
-  // Positions simples, communes aux deux clients (carte online synchronisée).
-  // (y ~ hauteur caméra : ici on reste aligné sur le sol/plateforme).
-  const y = 1.7;
-  const idp = (n) => `heal_${mapId}_${n}`;
-  if (mapId === "tours") {
-    return [
-      { id: idp(1), type: "heal", x: 0, y, z: 0, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-      { id: idp(2), type: "heal", x: -9, y, z: 9, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-      { id: idp(3), type: "heal", x: 9, y, z: -9, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-    ];
-  }
-  // arena (défaut)
-  return [
-    { id: idp(1), type: "heal", x: 0, y, z: 0, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-    { id: idp(2), type: "heal", x: -10, y, z: -10, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-    { id: idp(3), type: "heal", x: 10, y, z: 10, active: true, healAmount: HEAL_AMOUNT, respawnAtMs: 0 },
-  ];
+  // Positions lues depuis la carte JSON (source unique partagée avec le client/éditeur).
+  const map = MAP_DATA[mapId] || MAP_DATA.arena;
+  const list = (map && Array.isArray(map.pickups)) ? map.pickups : [];
+  return list.map((p, i) => ({
+    id: p.id || `heal_${mapId}_${i + 1}`,
+    type: p.type || "heal",
+    x: p.pos[0], y: p.pos[1], z: p.pos[2],
+    active: true,
+    healAmount: p.healAmount || HEAL_AMOUNT,
+    respawnAtMs: 0,
+  }));
 }
 
 function dist2(a, b) {
@@ -229,7 +255,7 @@ io.on("connection", (socket) => {
     // clamp anti out-of-bounds / téléport hors arène
     p.x = clamp(s.x, -ARENA_LIMIT, ARENA_LIMIT);
     p.z = clamp(s.z, -ARENA_LIMIT, ARENA_LIMIT);
-    p.y = clamp(s.y, 0, 20);
+    p.y = clamp(s.y, -20, 40); // marge pour reliefs (vallées) + sauts
     p.yaw = s.yaw;
 
     // Heal pickups : collecte autoritaire (serveur)
@@ -265,10 +291,6 @@ io.on("connection", (socket) => {
 process.on("uncaughtException", (e) => console.error("[uncaught]", e));
 process.on("unhandledRejection", (e) => console.error("[unhandled]", e));
 
-const PORT = Number(process.env.PORT) || 3000;
-const exposeOnNetwork = process.argv.includes("--host") || process.env.HOST === "0.0.0.0";
-const HOST = exposeOnNetwork ? "0.0.0.0" : "127.0.0.1";
-
 function getNetworkUrls(port) {
   const urls = [];
   for (const iface of Object.values(os.networkInterfaces())) {
@@ -281,16 +303,36 @@ function getNetworkUrls(port) {
   return urls;
 }
 
-server.listen(PORT, HOST, () => {
-  console.log("\n  ⚔  Arena Duel");
-  console.log(`  ➜  Local:   http://localhost:${PORT}`);
-  if (exposeOnNetwork) {
-    const network = getNetworkUrls(PORT);
-    if (network.length) {
-      for (const url of network) console.log(`  ➜  Network: ${url}`);
-    } else {
-      console.log("  ➜  Network: (aucune interface LAN détectée)");
+/**
+ * Démarre le serveur HTTP + Socket.IO.
+ * Utilisé directement (`node server.js`) ET importé par le process Electron.
+ *
+ * @param {{ port?: number, host?: string, exposeOnNetwork?: boolean }} [options]
+ * @returns {import("http").Server} L'instance serveur (pour un arrêt propre).
+ */
+export function startServer(options = {}) {
+  const port = options.port ?? (Number(process.env.PORT) || 3000);
+  const exposeOnNetwork = options.exposeOnNetwork ??
+    (process.argv.includes("--host") || process.env.HOST === "0.0.0.0");
+  const host = options.host ?? (exposeOnNetwork ? "0.0.0.0" : "127.0.0.1");
+
+  server.listen(port, host, () => {
+    console.log("\n  ⚔  Arena Duel");
+    console.log(`  ➜  Local:   http://localhost:${port}`);
+    if (exposeOnNetwork) {
+      const network = getNetworkUrls(port);
+      if (network.length) {
+        for (const url of network) console.log(`  ➜  Network: ${url}`);
+      } else {
+        console.log("  ➜  Network: (aucune interface LAN détectée)");
+      }
     }
-  }
-  console.log();
-});
+    console.log();
+  });
+  return server;
+}
+
+// Auto-démarrage uniquement si lancé directement (et non importé par Electron).
+const invokedDirectly = process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) startServer();

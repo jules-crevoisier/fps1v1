@@ -1,7 +1,14 @@
 import * as THREE from "three";
-import { SETTINGS, CLASSES, USER, saveUser, PROFILE, saveProfile, weaponColor, GAMEMODES } from "./config.js";
+import { SETTINGS, CLASSES, USER, saveUser, PROFILE, saveProfile, weaponColor, GAMEMODES,
+  QUALITY_PRESETS, loadAllData, playerLevel } from "./config.js";
+import { steam, ACH } from "./steam.js";
 import { Input } from "./input.js";
-import { buildArena, MAP_LIST } from "./arena.js";
+import { buildArena, MAP_LIST, loadMaps, registerMap, unregisterMap } from "./arena.js";
+import { updateAnimated } from "./anim.js";
+import { Editor } from "./editor/editor.js";
+import { decorateScene } from "./editor/assets.js";
+import { listCustomMaps, loadCustomMap } from "./editor/mapStore.js";
+import { openWeaponsEditor } from "./editor/weaponsEditor.js";
 import { Player } from "./player.js";
 import { Avatar } from "./avatar.js";
 import { Bot } from "./bot.js";
@@ -27,34 +34,55 @@ const clock = new THREE.Clock();
 let netAccum = 0, curFov = 90, stepT = 0, wasReloading = false;
 let match = { shots: 0, hits: 0, damage: 0, xpStart: 0 };
 let gm = GAMEMODES.duel, builtMap = null, roundTimer = 0, onlineSide = 0;
+let editor = null, returnToEditor = false, lastTestId = null;
+let animTime = 0;   // horloge des objets de carte animés
 
 // ============================ INIT 3D ============================
-function initRenderer() {
-  if (renderer) return;
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+let rendererAntialias = null;
+
+function currentQuality() { return QUALITY_PRESETS[USER.quality] || QUALITY_PRESETS.high; }
+
+// Applique les réglages qui peuvent changer "à chaud" (sans recréer le contexte WebGL).
+function applyRendererQuality(q) {
+  renderer.setPixelRatio(Math.min(devicePixelRatio, q.pixelRatio));
+  renderer.shadowMap.enabled = q.shadows;
+}
+
+function onResize() {
+  if (!renderer || !camera) return;
   renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.shadowMap.enabled = true;
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", onResize);
+
+function initRenderer() {
+  const q = currentQuality();
+  // L'antialiasing ne peut pas changer après création du contexte : on recrée si besoin.
+  if (renderer && rendererAntialias === q.antialias) { applyRendererQuality(q); return; }
+  if (renderer) renderer.dispose();
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: q.antialias, powerPreference: "high-performance" });
+  rendererAntialias = q.antialias;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  camera = new THREE.PerspectiveCamera(90, innerWidth / innerHeight, 0.05, 1000);
-  addEventListener("resize", () => {
-    renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-  });
+  renderer.setSize(innerWidth, innerHeight);
+  applyRendererQuality(q);
+  if (!camera) camera = new THREE.PerspectiveCamera(90, innerWidth / innerHeight, 0.05, 1000);
 }
 
 function buildScene(mapId) {
   if (viewmodel) viewmodel.dispose();
   if (pickups) { pickups.dispose(); pickups = null; }
   scene = new THREE.Scene();
-  env = buildArena(scene, mapId);
+  const q = currentQuality();
+  env = buildArena(scene, mapId, { shadows: q.shadows, shadowMapSize: q.shadowMapSize });
   oppAvatar = new Avatar(scene);
   scene.add(camera);                 // pour que le viewmodel (enfant) soit rendu
   viewmodel = new ViewModel(camera);
   viewmodel._tintFor = (id) => weaponColor(id);
   pickups = new PickupsManager(scene);
   builtMap = mapId;
+  // Décorations optionnelles (textures de sol / props glTF) : WYSIWYG avec l'éditeur.
+  decorateScene(scene, env.map, env).catch(() => {});
 }
 
 // Choisit un spawn : le plus loin de `awayFrom` si multi-spawn, sinon index fixe.
@@ -115,6 +143,10 @@ function onPlayerFire(origin, base, weapon) {
 // Par projectile : visuels (tracer, impact) + dégâts UNIQUEMENT en solo.
 function onPlayerShoot(origin, dir, weapon) {
   const ray = new THREE.Raycaster(origin, dir, 0.1, weapon.range);
+  // Occlusion des dégâts : uniquement les blocs/cover (PAS le sol/terrain).
+  const occHits = ray.intersectObjects(env.occluders, false);
+  const occDist = occHits.length ? occHits[0].distance : weapon.range;
+  // Arrêt visuel de la balle : blocs + sol/terrain.
   const wallHits = ray.intersectObjects(env.solids, false);
   const wallDist = wallHits.length ? wallHits[0].distance : weapon.range;
   let end = origin.clone().addScaledVector(dir, Math.min(wallDist, weapon.range));
@@ -124,7 +156,7 @@ function onPlayerShoot(origin, dir, weapon) {
     match.shots++;
     if (oppAvatar.group.visible && oppAvatar.alive) {
       const tHits = ray.intersectObjects(oppAvatar.hitMeshes, false);
-      if (tHits.length && tHits[0].distance < wallDist) {
+      if (tHits.length && tHits[0].distance < occDist) {
         hitTarget = true;
         const headshot = tHits[0].object.userData.zone === "head";
         const dmg = weapon.damage * (headshot ? (weapon.headshotMult || 1.6) : 1);
@@ -167,6 +199,7 @@ function grantKillXp(weaponId, headshot) {
 function onOpponentKilled(headshot) {
   score.me++;
   grantKillXp(player.weaponState.id, headshot);
+  if (headshot) steam.unlock(ACH.FIRST_HEADSHOT);   // succès : premier headshot (idempotent)
   ui.setScore(score.me, score.opp);
   ui.killfeed(`Tu as éliminé l'adversaire${headshot ? " — HEADSHOT" : ""}`, true);
   if (gameOver()) return;
@@ -217,10 +250,24 @@ function respawnPlayer() {
 }
 
 // ============================ BOUCLE ============================
-function loop() {
+let lastFrameMs = 0, fpsFrames = 0, fpsElapsed = 0;
+function loop(nowMs = performance.now()) {
   if (state !== "playing") return;
   requestAnimationFrame(loop);
+
+  // Cap FPS optionnel (0 = illimité, sinon limite via le timestamp rAF).
+  if (USER.fpsCap > 0) {
+    if (nowMs - lastFrameMs < 1000 / USER.fpsCap - 0.5) return;
+    lastFrameMs = nowMs;
+  }
+
   const dt = Math.min(clock.getDelta(), 0.05);
+
+  // Compteur FPS optionnel (rafraîchi ~2×/s).
+  if (USER.showFps) {
+    fpsFrames++; fpsElapsed += dt;
+    if (fpsElapsed >= 0.5) { ui.setFps(Math.round(fpsFrames / fpsElapsed)); fpsFrames = 0; fpsElapsed = 0; }
+  }
 
   if (roundTimer > 0) {
     // --- Décompte de manche : joueur et bot gelés ---
@@ -306,6 +353,9 @@ function loop() {
     if (im.life <= 0) { scene.remove(im.mesh); im.mesh.material.dispose(); impacts.splice(i, 1); }
   }
 
+  // objets de carte animés (plateformes, portes, rotations)
+  if (env?.animated?.length) { animTime += dt; updateAnimated(env.animated, animTime); }
+
   // billboards (barres de vie face caméra) — gérés par Sprite automatiquement
   renderer.render(scene, camera);
 }
@@ -356,12 +406,12 @@ function startGame(m) {
     bot.onShoot = onBotShoot;
     bot.spawn(chooseSpawn(player.pos, 1));
 
-    // Heal pickups en solo : 3 points fixes (simples et lisibles).
-    pickups?.initLocal([
-      { id: "h1", x: 0, y: 1.7, z: 0, healAmount: 35 },
-      { id: "h2", x: env.spawns[2].x * 0.55, y: 1.7, z: env.spawns[2].z * 0.55, healAmount: 35 },
-      { id: "h3", x: env.spawns[3].x * 0.55, y: 1.7, z: env.spawns[3].z * 0.55, healAmount: 35 },
-    ]);
+    // Heal pickups en solo : repris directement des pickups de la carte (WYSIWYG,
+    // identique au serveur online). Robuste pour les cartes custom (≥ 2 spawns).
+    const mapPickups = (env.map?.pickups || [])
+      .filter((p) => p && Array.isArray(p.pos))
+      .map((p, i) => ({ id: p.id || `heal_${i + 1}`, x: p.pos[0], y: p.pos[1], z: p.pos[2], healAmount: p.healAmount || 35 }));
+    pickups?.initLocal(mapPickups);
   } else {
     oppAvatar.setVisible(false);
   }
@@ -369,6 +419,7 @@ function startGame(m) {
   state = "playing";
   ui.show(null);
   ui.showHud();
+  ui.showFps(USER.showFps);
   ui.clearStateTag();
   clock.getDelta();
   canvas.requestPointerLock();
@@ -383,6 +434,15 @@ function endGame(win) {
   PROFILE.stats.games++;
   if (win) { PROFILE.stats.wins++; PROFILE.xp += 100; }
   saveProfile();
+
+  // --- Succès Steam (no-op silencieux hors Steam / mode web) ---
+  if (win) {
+    steam.unlock(ACH.FIRST_WIN);
+    if (score.opp === 0) steam.unlock(ACH.FLAWLESS);   // manche parfaite : aucun mort
+  }
+  // Succès cumulatifs (10 victoires, 100 kills, niveau 5) évalués sur les stats du profil.
+  steam.evaluateProgress({ stats: PROFILE.stats, level: playerLevel() });
+
   ui.renderStats();
   ui.endScreen(win, {
     me: score.me, opp: score.opp,
@@ -407,10 +467,92 @@ function resume() {
 
 function backToMenu() {
   ui.el.pause.classList.add("hidden");
-  state = "menu";
   document.exitPointerLock();
   if (net.socket) net.disconnect();
+  // Retour à l'éditeur après un test de carte (au lieu du menu).
+  if (returnToEditor) {
+    returnToEditor = false;
+    openEditor();
+    return;
+  }
+  state = "menu";
   ui.show("menu");
+}
+
+// ============================ ÉDITEUR ============================
+// ===================== MODE DÉVELOPPEUR =====================
+// L'éditeur n'est PAS accessible au public. Il n'apparaît que si le mode dev
+// est actif : param URL `?dev=1`, flag localStorage `arena_dev`, ou variable
+// d'env ARENA_DEV en desktop (Electron). Raccourci secret Ctrl+Shift+E pour
+// (dé)basculer le flag à la volée.
+function isDevMode() {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get("dev") === "1") { localStorage.setItem("arena_dev", "1"); }
+    if (params.get("dev") === "0") { localStorage.removeItem("arena_dev"); }
+  } catch {}
+  if (window.arenaDesktop?.isDev) return true; // exposé par le preload Electron
+  try { return localStorage.getItem("arena_dev") === "1"; } catch { return false; }
+}
+
+function applyDevMode() {
+  const dev = isDevMode();
+  for (const id of ["btn-editor", "btn-weapons"]) {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle("hidden", !dev);
+  }
+}
+
+function setupDevMode() {
+  applyDevMode();
+  addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.shiftKey && e.code === "KeyE") {
+      e.preventDefault();
+      try {
+        const on = localStorage.getItem("arena_dev") === "1";
+        if (on) localStorage.removeItem("arena_dev");
+        else localStorage.setItem("arena_dev", "1");
+      } catch {}
+      applyDevMode();
+    }
+  });
+}
+
+function openEditor() {
+  if (!isDevMode()) return; // garde-fou : jamais d'éditeur hors mode dev
+
+  state = "editor";
+  document.exitPointerLock();
+  initRenderer();                    // garantit renderer + caméra
+  ui.show(null);                     // masque tous les écrans de menu/HUD
+  if (!editor) editor = new Editor(renderer, canvas, { onExit: exitEditor, onTest: startEditorTest });
+  editor.open();
+}
+
+function exitEditor() {
+  if (editor) editor.close();
+  if (lastTestId) { unregisterMap(lastTestId); lastTestId = null; }
+  state = "menu";
+  ui.show("menu");
+  refreshMapSelector();              // affiche les éventuelles cartes custom sauvegardées
+}
+
+// Lance une partie solo sur la carte en cours d'édition, puis retour éditeur.
+function startEditorTest(map) {
+  steam.unlock(ACH.EDITOR_TEST);   // succès : tester une carte dans l'éditeur
+  if (lastTestId) unregisterMap(lastTestId);
+  map.id = "__editor_test_" + Date.now();
+  lastTestId = map.id;
+  registerMap(map, { listed: false });   // jouable sans polluer le sélecteur du menu
+  if (editor) editor.close();
+  PROFILE.map = map.id;
+  builtMap = null;                        // force la reconstruction de la scène
+  returnToEditor = true;
+  startGame("solo");
+}
+
+function refreshMapSelector() {
+  ui.buildPills("map-sel", MAP_LIST, PROFILE.map, (id) => { PROFILE.map = id; saveProfile(); });
 }
 
 // ============================ ONLINE ============================
@@ -563,11 +705,36 @@ function setupUI() {
     saveUser();
   };
 
+  // Qualité graphique : applique le pixelRatio/ombres à chaud, force la reconstruction
+  // de la scène (taille de shadow map) au prochain lancement.
+  const qualityOpts = Object.entries(QUALITY_PRESETS).map(([id, q]) => ({ id, name: q.label }));
+  ui.buildPills("quality-sel", qualityOpts, USER.quality, (id) => {
+    USER.quality = id;
+    saveUser();
+    if (renderer) { initRenderer(); applyRendererQuality(currentQuality()); }
+    builtMap = null; // rebâtir la scène (shadowMapSize) au prochain startGame
+  });
+
+  // Limite FPS.
+  const fpsOpts = [
+    { id: "0", name: "Illimité" }, { id: "30", name: "30" }, { id: "60", name: "60" },
+    { id: "120", name: "120" }, { id: "144", name: "144" }, { id: "240", name: "240" },
+  ];
+  ui.buildPills("fpscap-sel", fpsOpts, String(USER.fpsCap), (id) => { USER.fpsCap = parseInt(id, 10); saveUser(); });
+
+  // Compteur FPS.
+  const showFps = document.getElementById("set-showfps");
+  showFps.checked = USER.showFps;
+  showFps.onchange = () => { USER.showFps = showFps.checked; ui.showFps(USER.showFps); saveUser(); };
+
   // init audio + petit son sur tous les boutons (1er geste utilisateur)
   document.querySelectorAll(".btn, .tab").forEach((b) =>
     b.addEventListener("click", () => { audio.init(); audio.ui(); }));
 
   document.getElementById("btn-solo").onclick = () => startGame("solo");
+  document.getElementById("btn-editor").onclick = openEditor;
+  document.getElementById("btn-weapons").onclick = () => { if (isDevMode()) openWeaponsEditor(); };
+  setupDevMode();
   document.getElementById("btn-online").onclick = () => {
     setupNet();
     net.connect();
@@ -599,6 +766,33 @@ function setupUI() {
 const _origQueue = net.queue.bind(net);
 net.queue = (pseudo, classId, loadout) => _origQueue(pseudo, classId, loadout, PROFILE.map);
 
-setupUI();
-setupChat();
-ui.show("menu");
+// Boot : on charge d'abord les données (armes JSON, cartes, profil/réglages persistés)
+// AVANT de construire l'UI, car celle-ci en dépend.
+// Enregistre les cartes personnalisées (userData en desktop, localStorage en web)
+// dans le moteur pour qu'elles soient sélectionnables et jouables (solo).
+async function loadCustomMapsIntoEngine() {
+  try {
+    const list = await listCustomMaps();
+    for (const { id } of list) {
+      const map = await loadCustomMap(id);
+      if (map && map.id) registerMap(map);
+    }
+  } catch (e) {
+    console.error("[main] chargement des cartes custom impossible :", e);
+  }
+}
+
+async function boot() {
+  try {
+    // Statut Steam récupéré tôt (no-op/false en web) : conditionne le cloud dans storage.
+    await steam.init();
+    await Promise.all([loadAllData(), loadMaps()]);
+    await loadCustomMapsIntoEngine();
+  } catch (e) {
+    console.error("[main] échec du chargement initial :", e);
+  }
+  setupUI();
+  setupChat();
+  ui.show("menu");
+}
+boot();

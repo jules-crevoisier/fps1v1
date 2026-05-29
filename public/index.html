@@ -4,15 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ARENA DUEL — 1v1 FPS</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Polices hébergées localement (offline) -->
+  <link rel="stylesheet" href="vendor/fonts/fonts.css" />
   <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/editor.css" />
+  <!-- Three.js vendu en local (offline). Les addons pointent vers vendor/ pour
+       compatibilité future (aucun addon n'est importé actuellement). -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
     }
   }
   </script>
@@ -63,6 +65,8 @@
           <div class="buttons">
             <button id="btn-solo" class="btn btn-primary">ENTRAÎNEMENT — vs BOT</button>
             <button id="btn-online" class="btn btn-secondary">DUEL EN LIGNE — 1v1</button>
+            <button id="btn-editor" class="btn btn-ghost hidden">ÉDITEUR DE CARTES (DEV)</button>
+            <button id="btn-weapons" class="btn btn-ghost hidden">ÉDITEUR D'ARMES (DEV)</button>
           </div>
         </section>
 
@@ -96,6 +100,19 @@
               <span id="set-fov-val" class="sval">90</span>
             </label>
           </div>
+          <div class="field" style="margin-top:16px">
+            <span>Qualité graphique</span>
+            <div id="quality-sel" class="pill-row"></div>
+          </div>
+          <div class="field">
+            <span>Limite d'images par seconde</span>
+            <div id="fpscap-sel" class="pill-row"></div>
+          </div>
+          <label class="slider-row" style="margin-top:8px">
+            <span class="slabel">Afficher le compteur FPS</span>
+            <input id="set-showfps" type="checkbox" />
+            <span class="sval"></span>
+          </label>
           <div class="controls-hint" style="margin-top:18px;text-align:left">
             <b>ZQSD/WASD</b> bouger (sprint auto) · <b>Alt</b> marcher · <b>Souris</b> viser · <b>Clic</b> tirer ·
             <b>Espace</b> sauter · <b>Ctrl</b> slide · <b>R</b> recharger · <b>1/2</b> armes · <b>Entrée</b> chat · <b>Échap</b> pause
@@ -124,6 +141,7 @@
   <!-- ===================== HUD EN JEU ===================== -->
   <div id="hud" class="hidden">
     <div id="dmg-flash"></div>
+    <div id="fps" class="hidden">-- FPS</div>
     <div id="crosshair">
       <span class="ch ch-t"></span><span class="ch ch-b"></span>
       <span class="ch ch-l"></span><span class="ch ch-r"></span>

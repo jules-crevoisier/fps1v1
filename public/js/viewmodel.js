@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { WEAPONS } from "./config.js";
 import { toonMat, addOutline } from "./toon.js";
+import { hasAnim, sampleAnim } from "./anim.js";
 
 // Dimensions par arme (longueur du corps, présence d'une lunette, etc.)
 const SHAPE = {
@@ -32,6 +33,13 @@ export class ViewModel {
     this.reloadA = 0;
     this.currentId = null;
 
+    // Clips d'animation custom par événement (idle/fire/reload/equip), depuis weapons.json
+    this.clips = null;
+    this._idleT = 0;          // horloge du clip idle (boucle)
+    this._osClip = null;      // clip one-shot en cours (fire/reload/equip)
+    this._osT = 0;
+    this._wasReloading = false;
+
     // Muzzle flash : plan additif + lumière
     this.flashMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(0.22, 0.22),
@@ -43,13 +51,55 @@ export class ViewModel {
     this.flash = 0;
   }
 
-  setWeapon(id, tint) {
-    this.currentId = id;
-    // purge ancien modèle (garde flash + light)
+  _clearWeaponMeshes() {
+    // retire tout sauf le flash + la lumière
     for (let i = this.group.children.length - 1; i >= 0; i--) {
       const c = this.group.children[i];
-      if (c !== this.flashMesh && c !== this.flashLight) { this.group.remove(c); }
+      if (c !== this.flashMesh && c !== this.flashLight) {
+        this.group.remove(c);
+        c.traverse?.((o) => { if (o.isMesh && o.geometry) o.geometry.dispose?.(); });
+      }
     }
+  }
+
+  setWeapon(id, tint) {
+    this.currentId = id;
+    this._clearWeaponMeshes();
+    // Modèle 3D custom (GLB) si l'arme en déclare un : weapons.json → viewModel:{model,scale,pos,rot,muzzle}
+    const cfg = WEAPONS[id]?.viewModel;
+    // Clips d'animation + jouer l'animation d'équipement.
+    this.clips = cfg?.clips || null;
+    this._idleT = 0; this._osT = 0;
+    this._osClip = this.clips?.equip && hasAnim(this.clips.equip) ? this.clips.equip : null;
+    this._modelToken = (this._modelToken || 0) + 1;
+    if (cfg && cfg.model) {
+      this._buildProcedural(id, tint);   // fallback affiché pendant le chargement
+      const token = this._modelToken;
+      import("./editor/assets.js")
+        .then(({ loadModel }) => loadModel(cfg.model))
+        .then((obj) => {
+          if (token !== this._modelToken) return;   // arme changée entre-temps
+          this._clearWeaponMeshes();
+          const sc = typeof cfg.scale === "number" ? cfg.scale : 1;
+          obj.scale.setScalar(sc);
+          const [px, py, pz] = cfg.pos || [0.18, -0.18, -0.40];
+          obj.position.set(px, py, pz);
+          const [rx, ry, rz] = cfg.rot || [0, 0, 0];
+          obj.rotation.set(rx, ry, rz);
+          this.group.add(obj);
+          const [mx, my, mz] = cfg.muzzle || [px, py, pz - 0.5 * sc];
+          this._muzzleY = my;
+          this._muzzleZ = mz;
+          this.flashMesh.position.set(mx, my, mz);
+          this.flashLight.position.set(mx, my, mz);
+        })
+        .catch((e) => console.warn("[viewmodel] modèle d'arme introuvable :", cfg.model, e?.message || e));
+      return;
+    }
+    this._buildProcedural(id, tint);
+  }
+
+  _buildProcedural(id, tint) {
     const s = SHAPE[id] || SHAPE.rifle;
     const dark = toonMat(0x15181d);
     const accent = toonMat(tint, { emissive: tint, emissiveIntensity: 0.15 });
@@ -88,6 +138,7 @@ export class ViewModel {
   }
 
   fire() {
+    if (this.clips?.fire && hasAnim(this.clips.fire)) { this._osClip = this.clips.fire; this._osT = 0; }
     this.kick = Math.min(1, this.kick + 0.7);
     this.flash = 1;
     this.flashMesh.rotation.z = Math.random() * Math.PI;
@@ -128,6 +179,9 @@ export class ViewModel {
     this.group.rotation.x = this.kick * 0.18 + this.reloadA * 0.8;
     this.group.rotation.z = this.reloadA * 0.5;
 
+    // Clips d'animation custom (par-dessus la pose procédurale).
+    if (this.clips) this._applyClips(dt, reloading);
+
     // muzzle flash
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 22);
@@ -135,6 +189,34 @@ export class ViewModel {
       this.flashLight.intensity = this.flash * 4;
       this.flashMesh.lookAt(this.camera.position);
     }
+  }
+
+  _applyClips(dt, reloading) {
+    // déclenche le clip de recharge au début d'une recharge
+    if (reloading && !this._wasReloading && this.clips.reload && hasAnim(this.clips.reload)) {
+      this._osClip = this.clips.reload; this._osT = 0;
+    }
+    this._wasReloading = reloading;
+
+    let p = [0, 0, 0], r = [0, 0, 0], s = 1;
+    // idle en boucle (baseline)
+    if (this.clips.idle && hasAnim(this.clips.idle)) {
+      this._idleT += dt;
+      const o = sampleAnim(this.clips.idle, this._idleT);
+      p = [o.p[0], o.p[1], o.p[2]]; r = [o.r[0], o.r[1], o.r[2]]; s *= o.s ?? 1;
+    }
+    // one-shot (fire/reload/equip) en surcouche
+    if (this._osClip) {
+      this._osT += dt;
+      const o = sampleAnim(this._osClip, this._osT);
+      p = [p[0] + o.p[0], p[1] + o.p[1], p[2] + o.p[2]];
+      r = [r[0] + o.r[0], r[1] + o.r[1], r[2] + o.r[2]];
+      s *= o.s ?? 1;
+      if (this._osT >= (this._osClip.dur || 1)) this._osClip = null; // one-shot terminé
+    }
+    this.group.position.x += p[0]; this.group.position.y += p[1]; this.group.position.z += p[2];
+    this.group.rotation.x += r[0]; this.group.rotation.y += r[1]; this.group.rotation.z += r[2];
+    this.group.scale.setScalar(s);
   }
 
   dispose() {
