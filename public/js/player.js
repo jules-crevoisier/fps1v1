@@ -253,13 +253,25 @@ export class Player {
     this._integrateAxis("x", this.vel.x * dt, env.colliders);
     this._integrateAxis("z", this.vel.z * dt, env.colliders);
 
-    // Vertical — le sol suit le terrain (heightmap) sous le joueur ; yeux = sol + hauteur.
-    const ground = sampleTerrainHeight(env.terrain, this.pos.x, this.pos.z);
-    const floorEye = ground + this.height;
+    // Vertical — support = max(terrain, dessus des blocs sous le joueur).
+    // On peut se TENIR sur les plateformes/blocs : on cherche la surface la plus haute
+    // dont le sommet est au niveau (ou sous) nos pieds, dans notre empreinte XZ.
+    let support = sampleTerrainHeight(env.terrain, this.pos.x, this.pos.z);
+    const feet = this.pos.y - this.height;
+    const r = this.radius;
+    for (const box of env.colliders) {
+      if (this.pos.x <= box.min.x - r || this.pos.x >= box.max.x + r) continue;
+      if (this.pos.z <= box.min.z - r || this.pos.z >= box.max.z + r) continue;
+      const top = box.max.y;
+      // se poser seulement si nos pieds sont au-dessus (ou quasi) du sommet du bloc
+      // (le `top <= feet+0.35` exclut aussi les murs « infinis » de bordure).
+      if (top <= feet + 0.35 && top > support) support = top;
+    }
+    const floorEye = support + this.height;
     this.pos.y += this.vel.y * dt;
-    // Au sol et en chute : la caméra (yeux = pos.y) suit la hauteur courante,
-    // qui s'abaisse pendant le slide → vraie descente fluide de la vue.
-    if (this.onGround && this.vel.y <= 0) this.pos.y = floorEye;
+    // Suivi doux du sol (slide/marches) UNIQUEMENT pour de petites variations :
+    // si le support baisse beaucoup (on quitte le bord d'une plateforme), on TOMBE.
+    if (this.onGround && this.vel.y <= 0 && Math.abs(this.pos.y - floorEye) < 0.6) this.pos.y = floorEye;
     if (this.pos.y <= floorEye) {
       this.pos.y = floorEye;
       this.vel.y = 0;

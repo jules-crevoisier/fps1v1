@@ -540,10 +540,9 @@ function keyLabel(code) {
 let _rebinding = null;
 function setupKeybinds() {
   renderKeybinds();
-  document.getElementById("keybinds-reset").onclick = () => {
-    USER.keybinds = { ...DEFAULT_KEYBINDS };
-    input.setBinds(USER.keybinds); saveUser(); renderKeybinds();
-  };
+  const reset = () => { USER.keybinds = { ...DEFAULT_KEYBINDS }; input.setBinds(USER.keybinds); saveUser(); renderKeybinds(); };
+  const rb = document.getElementById("keybinds-reset"); if (rb) rb.onclick = reset;
+  const rbp = document.getElementById("keybinds-pause-reset"); if (rbp) rbp.onclick = reset;
   // capture globale d'une touche pendant un remap
   addEventListener("keydown", (e) => {
     if (!_rebinding) return;
@@ -556,18 +555,20 @@ function setupKeybinds() {
   }, true);
 }
 function renderKeybinds() {
-  const c = document.getElementById("keybinds");
-  if (!c) return;
-  c.innerHTML = "";
-  for (const [action, label] of KEYBIND_ACTIONS) {
-    const row = document.createElement("div");
-    row.className = "keybind-row";
-    const lab = document.createElement("span"); lab.className = "kb-label"; lab.textContent = label;
-    const btn = document.createElement("button"); btn.className = "btn btn-ghost kb-key";
-    btn.textContent = _rebinding === action ? "Appuyez…" : keyLabel(USER.keybinds[action]);
-    btn.onclick = () => { _rebinding = action; renderKeybinds(); };
-    row.appendChild(lab); row.appendChild(btn);
-    c.appendChild(row);
+  for (const cid of ["keybinds", "keybinds-pause"]) {
+    const c = document.getElementById(cid);
+    if (!c) continue;
+    c.innerHTML = "";
+    for (const [action, label] of KEYBIND_ACTIONS) {
+      const row = document.createElement("div");
+      row.className = "keybind-row";
+      const lab = document.createElement("span"); lab.className = "kb-label"; lab.textContent = label;
+      const btn = document.createElement("button"); btn.className = "btn btn-ghost kb-key";
+      btn.textContent = _rebinding === action ? "Appuyez…" : keyLabel(USER.keybinds[action]);
+      btn.onclick = () => { _rebinding = action; renderKeybinds(); };
+      row.appendChild(lab); row.appendChild(btn);
+      c.appendChild(row);
+    }
   }
 }
 function setupPauseSettings() {
@@ -581,6 +582,7 @@ function setupPauseSettings() {
     ui.el.pause.classList.add("hidden");
     document.getElementById("pause-settings").classList.remove("hidden");
     syncPauseSettings();
+    renderKeybinds();
   };
   document.getElementById("btn-settings-back").onclick = () => {
     document.getElementById("pause-settings").classList.add("hidden");
