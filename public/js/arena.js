@@ -15,7 +15,7 @@ import { hasAnim } from "./anim.js";
 //     pickups:[ {id, type, pos:[x,y,z], healAmount} ] }
 // Les couleurs sont des chaînes CSS "#rrggbb" (THREE.Color/les matériaux les acceptent).
 
-const MAP_FILES = ["arena", "tours"];
+const MAP_FILES = ["arena", "tours", "ascension", "nexus"];
 const MAPS = {};
 
 // Liste des cartes pour l'UI (remplie par loadMaps, référence stable).
@@ -71,6 +71,27 @@ export function unregisterMap(id) {
 
 /** Renvoie la donnée brute d'une carte chargée (ou null). */
 export function getMap(id) { return MAPS[id] || null; }
+
+/**
+ * Garantit qu'une carte est chargée (la récupère depuis data/maps/<id>.json si absente).
+ * Sert au mode EN LIGNE où le serveur peut imposer une carte aléatoire/publiée que le
+ * client n'a pas encore en mémoire. Renvoie l'objet carte ou null.
+ */
+export async function ensureMap(id) {
+  if (!id) return null;
+  if (MAPS[id]) return MAPS[id];
+  try {
+    const res = await fetch(`data/maps/${id}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const m = await res.json();
+    m.id = m.id || id;
+    registerMap(m, { listed: false });
+    return m;
+  } catch (e) {
+    console.error(`[arena] carte "${id}" introuvable :`, e);
+    return null;
+  }
+}
 
 function getMapData(mapId) {
   return MAPS[mapId] || MAPS.arena || Object.values(MAPS)[0] || null;
@@ -235,6 +256,29 @@ export function buildArenaFromData(scene, map, opts = {}) {
     group.add(water);
   }
 
+  // --- Téléporteurs (optionnels) ---
+  // Schéma : map.teleporters = [ { from:[x,y,z], to:[x,y,z], r? } ]. Entrer dans la
+  // zone `from` téléporte le joueur en `to`. Marqueur visuel (anneau + colonne) aux 2 bouts.
+  const teleporters = [];
+  for (const tp of (Array.isArray(map.teleporters) ? map.teleporters : [])) {
+    if (!Array.isArray(tp.from) || !Array.isArray(tp.to)) continue;
+    const r = tp.r || 1.3;
+    teleporters.push({ from: tp.from.slice(), to: tp.to.slice(), r });
+    const mkMarker = (p, color) => {
+      const g = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.08, 8, 24), mat);
+      ring.rotation.x = -Math.PI / 2; ring.position.set(p[0], p[1] - SETTINGS.playerHeight + 0.06, p[2]);
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.9, r * 0.9, 5, 20, 1, true),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+      beam.position.set(p[0], p[1] - SETTINGS.playerHeight + 2.5, p[2]);
+      g.add(ring, beam);
+      group.add(g);
+    };
+    mkMarker(tp.from, 0x4fc3ff);  // entrée (bleu)
+    mkMarker(tp.to, 0xff9e2c);    // sortie (ambre)
+  }
+
   scene.add(group);
 
   // Spawns : depuis la carte, sinon 6 points calculés (coins + axes).
@@ -261,5 +305,5 @@ export function buildArenaFromData(scene, map, opts = {}) {
   // solids = ce qui arrête VISUELLEMENT les balles (tracer + impact) : on y ajoute le sol.
   if (floor && !solids.includes(floor)) solids.push(floor);
 
-  return { group, colliders, spawns, solids, occluders, coverPoints, floor, floorMat, water, terrain, animated, map };
+  return { group, colliders, spawns, solids, occluders, coverPoints, floor, floorMat, water, terrain, animated, teleporters, map };
 }

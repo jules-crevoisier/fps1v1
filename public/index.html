@@ -99,6 +99,11 @@
               <input id="set-fov" type="range" min="70" max="110" step="1" value="90" />
               <span id="set-fov-val" class="sval">90</span>
             </label>
+            <label class="slider-row">
+              <span class="slabel">Volume</span>
+              <input id="set-volume" type="range" min="0" max="1" step="0.05" value="0.5" />
+              <span id="set-volume-val" class="sval">50%</span>
+            </label>
           </div>
           <div class="field" style="margin-top:16px">
             <span>Qualité graphique</span>
@@ -201,7 +206,38 @@
     <h1 class="title" style="font-size:54px">PAUSE</h1>
     <div class="buttons" style="min-width:300px">
       <button id="btn-resume" class="btn btn-primary">REPRENDRE</button>
+      <button id="btn-settings" class="btn btn-secondary">PARAMÈTRES</button>
       <button id="btn-quit" class="btn btn-ghost">QUITTER AU MENU</button>
+    </div>
+  </div>
+
+  <!-- ===================== PARAMÈTRES (en jeu, depuis la pause) ===================== -->
+  <div id="pause-settings" class="screen hidden">
+    <h1 class="title" style="font-size:40px">PARAMÈTRES</h1>
+    <div class="settings" style="min-width:360px">
+      <label class="slider-row">
+        <span class="slabel">Sensibilité souris</span>
+        <input id="ps-sens" type="range" min="0.2" max="3" step="0.05" value="1" />
+        <span id="ps-sens-val" class="sval">1.00</span>
+      </label>
+      <label class="slider-row">
+        <span class="slabel">Champ de vision (FOV)</span>
+        <input id="ps-fov" type="range" min="70" max="110" step="1" value="90" />
+        <span id="ps-fov-val" class="sval">90</span>
+      </label>
+      <label class="slider-row">
+        <span class="slabel">Volume</span>
+        <input id="ps-volume" type="range" min="0" max="1" step="0.05" value="0.5" />
+        <span id="ps-volume-val" class="sval">50%</span>
+      </label>
+      <label class="slider-row">
+        <span class="slabel">Afficher le compteur FPS</span>
+        <input id="ps-showfps" type="checkbox" />
+        <span class="sval"></span>
+      </label>
+    </div>
+    <div class="buttons" style="min-width:300px;margin-top:18px">
+      <button id="btn-settings-back" class="btn btn-primary">RETOUR</button>
     </div>
   </div>
 

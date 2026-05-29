@@ -64,6 +64,7 @@ export class Avatar {
     this.hpBar = new THREE.Sprite(new THREE.SpriteMaterial({ map: this._hpTex, depthTest: false }));
     this.hpBar.position.y = 2.15;
     this.hpBar.scale.set(1.4, 0.18, 1);
+    this.hpBar.visible = false;   // barre de vie de l'adversaire masquée (demande joueur)
     this.group.add(this.hpBar);
     this._drawHp(1);
 

@@ -137,6 +137,45 @@ function tryCollectHeal(room, player) {
   }
 }
 
+// Boîtes AABB des couvertures d'une carte (pour l'occlusion des tirs côté serveur).
+// La rotation est ignorée (approximation par les bornes alignées — sûr : occlut un peu large).
+function buildOccluders(mapId) {
+  const map = MAP_DATA[mapId];
+  const boxes = [];
+  for (const c of (map && Array.isArray(map.covers) ? map.covers : [])) {
+    if (!Array.isArray(c.pos) || !Array.isArray(c.size)) continue;
+    const [x, y, z] = c.pos, [w, h, d] = c.size;
+    boxes.push({ min: [x - w / 2, y - h / 2, z - d / 2], max: [x + w / 2, y + h / 2, z + d / 2] });
+  }
+  return boxes;
+}
+
+// Intersection rayon→AABB (slab). Renvoie la distance d'entrée (>0), 0 si origine dedans, ou Infinity.
+function rayBox(o, d, box) {
+  let tmin = -Infinity, tmax = Infinity;
+  const oo = [o.x, o.y, o.z], dd = [d.x, d.y, d.z];
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(dd[i]) < 1e-8) {
+      if (oo[i] < box.min[i] || oo[i] > box.max[i]) return Infinity;
+    } else {
+      let t1 = (box.min[i] - oo[i]) / dd[i], t2 = (box.max[i] - oo[i]) / dd[i];
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+    }
+  }
+  if (tmax < Math.max(0, tmin)) return Infinity;
+  return tmin > 0 ? tmin : (tmax > 0 ? 0 : Infinity);
+}
+
+// Vrai si un mur/cover s'intercale entre l'origine et la cible (à `targetDist`).
+function shotOccluded(occluders, o, d, targetDist) {
+  for (const box of occluders) {
+    const t = rayBox(o, d, box);
+    if (t < targetDist - 0.3) return true;
+  }
+  return false;
+}
+
 // Angle (rad) entre la visée et la direction vers un point cible.
 function aimAngleTo(p, dir, tx, ty, tz) {
   const vx = tx - p.x, vy = ty - p.y, vz = tz - p.z;
@@ -172,6 +211,9 @@ function resolveShot(room, shooter, target, msg) {
   if (head.ang <= headTol) { hit = true; headshot = true; }
   else if (body.ang <= bodyTol) { hit = true; }
   if (!hit) return;
+
+  // Occlusion : un mur/cover entre le tireur et la cible annule le tir.
+  if (room.occluders && shotOccluded(room.occluders, o, d, body.dist)) return;
 
   let dmg = w.damage * (w.pellets || 1);
   if (w.range <= 30) dmg *= Math.max(0.25, 1 - body.dist / w.range); // falloff pompe
@@ -221,11 +263,14 @@ io.on("connection", (socket) => {
       a.join(roomId); socket.join(roomId);
       a.data.roomId = roomId; socket.data.roomId = roomId;
       a.data.oppId = socket.id; socket.data.oppId = a.id;
-      const mapId = VALID_MAP(a.data.mapId) ? a.data.mapId : (VALID_MAP(socket.data.mapId) ? socket.data.mapId : "arena");
+      // Carte ALÉATOIRE en ligne (parmi toutes les cartes chargées).
+      const allMaps = Object.keys(MAP_DATA);
+      const mapId = allMaps.length ? allMaps[Math.floor(Math.random() * allMaps.length)] : "arena";
 
       const room = {
         id: roomId, ids: [a.id, socket.id],
         mapId,
+        occluders: buildOccluders(mapId),
         players: {
           [a.id]: newPlayer(a.id, 0, a.data.pseudo, a.data.classId, a.data.loadout),
           [socket.id]: newPlayer(socket.id, 1, socket.data.pseudo, socket.data.classId, socket.data.loadout),

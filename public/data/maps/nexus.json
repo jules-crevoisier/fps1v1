@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "id": "nexus",
+  "name": "Nexus",
+  "size": 56,
+  "floorColor": "#2a2740",
+  "background": "#120f1e",
+  "wallColor": "#221d35",
+  "coverColor": "#3a3358",
+  "accentColor": "#b06bff",
+  "fog": { "color": "#120f1e", "near": 70, "far": 180 },
+  "lights": {
+    "hemisphere": { "sky": "#cdbfff", "ground": "#3a3450", "intensity": 1.3 },
+    "directional": { "color": "#ffffff", "intensity": 1.85, "position": [18, 40, 18], "castShadow": true, "shadowMapSize": 2048 },
+    "fill": { "color": "#a98fff", "intensity": 0.55, "position": [-22, 20, -18] },
+    "ambient": { "color": "#5a557a", "intensity": 0.7 }
+  },
+  "covers": [
+    { "pos": [0, 1.5, 0], "size": [6, 3, 6], "accent": true },
+    { "pos": [0, 3.2, 0], "size": [3, 0.6, 3] },
+
+    { "pos": [-14, 1, -14], "size": [5, 2, 5] },
+    { "pos": [14, 1, 14], "size": [5, 2, 5] },
+    { "pos": [14, 1, -14], "size": [5, 2, 5] },
+    { "pos": [-14, 1, 14], "size": [5, 2, 5] },
+
+    { "pos": [0, 1, -16], "size": [7, 2, 1.5] },
+    { "pos": [0, 1, 16], "size": [7, 2, 1.5] },
+    { "pos": [-16, 1, 0], "size": [1.5, 2, 7] },
+    { "pos": [16, 1, 0], "size": [1.5, 2, 7] },
+
+    { "pos": [-8, 0.75, 8], "size": [3, 1.5, 3] },
+    { "pos": [8, 0.75, -8], "size": [3, 1.5, 3] }
+  ],
+  "spawns": [
+    [-22, 1.7, -22],
+    [22, 1.7, 22],
+    [22, 1.7, -22],
+    [-22, 1.7, 22]
+  ],
+  "teleporters": [
+    { "from": [0, 1.7, -22], "to": [0, 1.7, 11], "r": 1.5 },
+    { "from": [0, 1.7, 22], "to": [0, 1.7, -11], "r": 1.5 },
+    { "from": [-22, 1.7, 0], "to": [11, 1.7, 0], "r": 1.5 },
+    { "from": [22, 1.7, 0], "to": [-11, 1.7, 0], "r": 1.5 }
+  ],
+  "pickups": [
+    { "id": "heal_nexus_1", "type": "heal", "pos": [0, 1.7, 0], "healAmount": 40 },
+    { "id": "heal_nexus_2", "type": "heal", "pos": [-14, 1.7, 0], "healAmount": 35 },
+    { "id": "heal_nexus_3", "type": "heal", "pos": [14, 1.7, 0], "healAmount": 35 }
+  ]
+}

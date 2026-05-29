@@ -3,7 +3,7 @@ import { SETTINGS, CLASSES, USER, saveUser, PROFILE, saveProfile, weaponColor, G
   QUALITY_PRESETS, loadAllData, playerLevel } from "./config.js";
 import { steam, ACH } from "./steam.js";
 import { Input } from "./input.js";
-import { buildArena, MAP_LIST, loadMaps, registerMap, unregisterMap } from "./arena.js";
+import { buildArena, MAP_LIST, loadMaps, registerMap, unregisterMap, ensureMap } from "./arena.js";
 import { updateAnimated } from "./anim.js";
 import { Editor } from "./editor/editor.js";
 import { decorateScene } from "./editor/assets.js";
@@ -137,6 +137,24 @@ function onPlayerFire(origin, base, weapon) {
       ox: origin.x, oy: origin.y, oz: origin.z,
       dir: { x: base.x, y: base.y, z: base.z }, weaponId: player.weaponState.id,
     });
+  }
+}
+
+// Téléporteurs : entrer dans une zone `from` téléporte le joueur en `to`.
+let tpCooldown = 0;
+function checkTeleporters(dt) {
+  if (tpCooldown > 0) { tpCooldown -= dt; return; }
+  const tps = env?.teleporters;
+  if (!tps || !tps.length) return;
+  for (const tp of tps) {
+    const dx = player.pos.x - tp.from[0], dz = player.pos.z - tp.from[2];
+    if (dx * dx + dz * dz <= tp.r * tp.r) {
+      player.pos.set(tp.to[0], tp.to[1], tp.to[2]);
+      player.vel.y = Math.min(player.vel.y, 0);
+      tpCooldown = 1.0;   // évite le re-déclenchement / ping-pong
+      audio.ui?.();
+      break;
+    }
   }
 }
 
@@ -282,6 +300,7 @@ function loop(nowMs = performance.now()) {
       if (myRespawn <= 0) respawnPlayer();
     } else {
       player.update(dt, input, env);
+      checkTeleporters(dt);
 
       // ADS : zoom de la caméra (lunette pour sniper/dmr)
       const ads = input.adsDown && input.locked;
@@ -459,14 +478,52 @@ function openPause() {
 function resume() {
   if (state !== "paused") return;
   ui.el.pause.classList.add("hidden");
+  document.getElementById("pause-settings").classList.add("hidden");
   state = "playing";
   clock.getDelta();
   canvas.requestPointerLock();
   loop();
 }
 
+// ---- Paramètres en jeu (depuis la pause) ----
+function applyLiveSettings() {
+  if (camera) { camera.fov = USER.fov; camera.updateProjectionMatrix(); }
+  audio.setVolume(USER.volume);
+  ui.showFps(USER.showFps);
+}
+function updateSettingsDOM() {
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+  const txt = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set("set-sens", USER.sensitivity); txt("set-sens-val", Number(USER.sensitivity).toFixed(2));
+  set("set-fov", USER.fov); txt("set-fov-val", USER.fov);
+  set("set-volume", USER.volume); txt("set-volume-val", Math.round(USER.volume * 100) + "%");
+  set("ps-sens", USER.sensitivity); txt("ps-sens-val", Number(USER.sensitivity).toFixed(2));
+  set("ps-fov", USER.fov); txt("ps-fov-val", USER.fov);
+  set("ps-volume", USER.volume); txt("ps-volume-val", Math.round(USER.volume * 100) + "%");
+  const sf = document.getElementById("ps-showfps"); if (sf) sf.checked = USER.showFps;
+}
+function syncPauseSettings() { updateSettingsDOM(); }
+function setupPauseSettings() {
+  const bind = (id, fn) => { const e = document.getElementById(id); if (e) e.oninput = e.onchange = fn; };
+  bind("ps-sens", (e) => { USER.sensitivity = parseFloat(e.target.value); applyLiveSettings(); updateSettingsDOM(); saveUser(); });
+  bind("ps-fov", (e) => { USER.fov = parseInt(e.target.value, 10); applyLiveSettings(); updateSettingsDOM(); saveUser(); });
+  bind("ps-volume", (e) => { USER.volume = parseFloat(e.target.value); applyLiveSettings(); updateSettingsDOM(); saveUser(); });
+  bind("ps-showfps", (e) => { USER.showFps = e.target.checked; applyLiveSettings(); saveUser(); });
+  document.getElementById("btn-settings").onclick = () => {
+    if (state !== "paused") return;
+    ui.el.pause.classList.add("hidden");
+    document.getElementById("pause-settings").classList.remove("hidden");
+    syncPauseSettings();
+  };
+  document.getElementById("btn-settings-back").onclick = () => {
+    document.getElementById("pause-settings").classList.add("hidden");
+    ui.el.pause.classList.remove("hidden");
+  };
+}
+
 function backToMenu() {
   ui.el.pause.classList.add("hidden");
+  document.getElementById("pause-settings").classList.add("hidden");
   document.exitPointerLock();
   if (net.socket) net.disconnect();
   // Retour à l'éditeur après un test de carte (au lieu du menu).
@@ -558,10 +615,10 @@ function refreshMapSelector() {
 // ============================ ONLINE ============================
 function setupNet() {
   net.on("waiting", () => ui.show("waiting"));
-  net.on("matchFound", (d) => {
+  net.on("matchFound", async (d) => {
     onlineSide = d.side;
     const oppClass = d.opponent?.classId || "assault";
-    if (d.mapId) PROFILE.map = d.mapId;  // map synchronisée par le serveur (non persistée)
+    if (d.mapId) { await ensureMap(d.mapId); PROFILE.map = d.mapId; }  // map imposée par le serveur (aléatoire), chargée à la demande
     startGame("online");                 // (re)construit la scène + oppAvatar
     oppAvatar.setVisible(true);
     oppAvatar.setClassColor(oppClass);
@@ -726,6 +783,22 @@ function setupUI() {
   const showFps = document.getElementById("set-showfps");
   showFps.checked = USER.showFps;
   showFps.onchange = () => { USER.showFps = showFps.checked; ui.showFps(USER.showFps); saveUser(); };
+
+  // Volume (menu) — appliqué au démarrage et live.
+  audio.setVolume(USER.volume);
+  const vol = document.getElementById("set-volume");
+  const volVal = document.getElementById("set-volume-val");
+  vol.value = USER.volume; volVal.textContent = Math.round(USER.volume * 100) + "%";
+  vol.oninput = () => {
+    USER.volume = parseFloat(vol.value);
+    volVal.textContent = Math.round(USER.volume * 100) + "%";
+    audio.setVolume(USER.volume);
+    syncPauseSettings();
+    saveUser();
+  };
+
+  // ---- Paramètres accessibles depuis la PAUSE ----
+  setupPauseSettings();
 
   // init audio + petit son sur tous les boutons (1er geste utilisateur)
   document.querySelectorAll(".btn, .tab").forEach((b) =>

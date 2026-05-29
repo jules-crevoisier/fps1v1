@@ -5,6 +5,13 @@ class AudioEngine {
     this.master = null;
     this.enabled = true;
     this._noiseBuf = null;
+    this._volume = 0.5;   // volume maître [0..1]
+  }
+
+  /** Règle le volume maître (persisté via USER.volume). */
+  setVolume(v) {
+    this._volume = Math.max(0, Math.min(1, v));
+    if (this.master) this.master.gain.value = this._volume;
   }
 
   // À appeler sur un geste utilisateur (clic) pour débloquer l'audio.
@@ -13,7 +20,7 @@ class AudioEngine {
     const AC = window.AudioContext || window.webkitAudioContext;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.5;
+    this.master.gain.value = this._volume;
     this.master.connect(this.ctx.destination);
     // buffer de bruit blanc réutilisable
     const len = this.ctx.sampleRate * 0.4;
