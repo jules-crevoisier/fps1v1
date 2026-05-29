@@ -295,7 +295,7 @@ export class Editor {
       if (c.isLight) this.scene.remove(c);
     }
     // base SANS covers (gérés par l'éditeur) : on clone et on vide covers.
-    const baseMap = { ...this.map, covers: [], props: [] };
+    const baseMap = { ...this.map, covers: [], props: [], teleporters: [], ziplines: [] };
     this.baseEnv = buildArenaFromData(this.scene, baseMap, { shadows: true, shadowMapSize: 1024, editor: true });
   }
 
@@ -318,6 +318,30 @@ export class Editor {
     (this.map.covers || []).forEach((c) => this._addCoverMesh(c));
     (this.map.spawns || []).forEach((s, i) => this._addSpawnMesh(i));
     (this.map.pickups || []).forEach((p) => this._addPickupMesh(p));
+    (this.map.teleporters || []).forEach((tp, i) => this._addPairMeshes("tp", i, ["from", "to"], [0x4fc3ff, 0xff9e2c]));
+    (this.map.ziplines || []).forEach((zl, i) => this._addPairMeshes("zip", i, ["a", "b"], [0xffd27a, 0xffd27a]));
+  }
+
+  _pairArr(type) { return type === "tp" ? (this.map.teleporters ||= []) : (this.map.ziplines ||= []); }
+
+  // Poignées d'extrémités (déplaçables) + ligne de liaison pour un téléporteur/tyrolienne.
+  _addPairMeshes(type, index, keys, colors) {
+    const entry = this._pairArr(type)[index];
+    if (!entry) return;
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(keys.map((k) => new THREE.Vector3(...entry[k]))),
+      new THREE.LineBasicMaterial({ color: colors[0], depthTest: false }));
+    line.renderOrder = 990;
+    this.baseEnv.group.add(line);
+    keys.forEach((key, j) => {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 10), new THREE.MeshBasicMaterial({ color: colors[j] }));
+      mesh.position.set(entry[key][0], entry[key][1], entry[key][2]);
+      const obj = { kind: "endpoint", mesh, data: {}, ref: { type, index, key, keys, line } };
+      mesh.userData.editObj = obj;
+      this.baseEnv.group.add(mesh);
+      this.objects.push(obj);
+      this.pickMeshes.push(mesh);
+    });
   }
 
   // ---------------------------------------------------------------- création de meshes
@@ -449,6 +473,13 @@ export class Editor {
       this.map.spawns[o.index] = [r(m.position.x), r(m.position.y), r(m.position.z)];
     } else if (o.kind === "pickup") {
       o.data.pos = [r(m.position.x), r(m.position.y), r(m.position.z)];
+    } else if (o.kind === "endpoint") {
+      const { type, index, key, keys, line } = o.ref;
+      const entry = this._pairArr(type)[index];
+      if (entry) {
+        entry[key] = [r(m.position.x), r(m.position.y), r(m.position.z)];
+        line.geometry.setFromPoints(keys.map((k) => new THREE.Vector3(...entry[k])));
+      }
     }
     this.ui.showProperties(o);
   }
@@ -727,8 +758,23 @@ export class Editor {
     if (o.kind === "cover") this.map.covers.splice(this.map.covers.indexOf(o.data), 1);
     else if (o.kind === "pickup") this.map.pickups.splice(this.map.pickups.indexOf(o.data), 1);
     else if (o.kind === "spawn") this.map.spawns.splice(o.index, 1);
+    else if (o.kind === "endpoint") this._pairArr(o.ref.type).splice(o.ref.index, 1); // supprime la paire
     this.select(null);
     this._rebuildObjects();        // réindexe les spawns
+    this.ui.refresh();
+  }
+
+  addTeleporter() {
+    this.pushHistory();
+    (this.map.teleporters ||= []).push({ from: [-6, 1.7, 0], to: [6, 1.7, 0], r: 1.4 });
+    this._rebuildObjects();
+    this.ui.refresh();
+  }
+
+  addZipline() {
+    this.pushHistory();
+    (this.map.ziplines ||= []).push({ a: [-8, 5, 0], b: [8, 1.5, 0], speed: 18, r: 2.2 });
+    this._rebuildObjects();
     this.ui.refresh();
   }
 

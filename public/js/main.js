@@ -140,38 +140,59 @@ function onPlayerFire(origin, base, weapon) {
   }
 }
 
-// Téléporteurs : entrer dans une zone `from` téléporte le joueur en `to`.
-let tpCooldown = 0;
-function checkTeleporters(dt) {
-  if (tpCooldown > 0) { tpCooldown -= dt; return; }
+// Téléporteurs BIDIRECTIONNELS : les deux extrémités sont actives. On ignore tout
+// téléporteur tant qu'on n'a pas quitté toutes les zones (anti aller-retour).
+let tpIgnore = false;
+function checkTeleporters() {
   const tps = env?.teleporters;
   if (!tps || !tps.length) return;
+  let dest = null;
   for (const tp of tps) {
-    const dx = player.pos.x - tp.from[0], dz = player.pos.z - tp.from[2];
-    if (dx * dx + dz * dz <= tp.r * tp.r) {
-      player.pos.set(tp.to[0], tp.to[1], tp.to[2]);
-      player.vel.y = Math.min(player.vel.y, 0);
-      tpCooldown = 1.0;   // évite le re-déclenchement / ping-pong
-      audio.ui?.();
-      break;
-    }
+    const r2 = (tp.r || 1.3) * (tp.r || 1.3);
+    const da = (player.pos.x - tp.from[0]) ** 2 + (player.pos.z - tp.from[2]) ** 2;
+    const db = (player.pos.x - tp.to[0]) ** 2 + (player.pos.z - tp.to[2]) ** 2;
+    if (da <= r2) { dest = tp.to; break; }
+    if (db <= r2) { dest = tp.from; break; }   // sens inverse
   }
+  if (!dest) { tpIgnore = false; return; }
+  if (tpIgnore) return;
+  player.pos.set(dest[0], dest[1], dest[2]);
+  player.vel.y = Math.min(player.vel.y, 0);
+  tpIgnore = true;            // re-déclenche seulement après être ressorti de la zone
+  audio.ui?.();
 }
 
-// Tyroliennes : E près d'une extrémité → s'accroche et glisse vers l'autre bout.
+// Distance (XZ) d'un point au segment a→b + paramètre de projection [0..1].
+function projSegXZ(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const len2 = dx * dx + dz * dz || 1e-6;
+  let t = ((px - ax) * dx + (pz - az) * dz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + dx * t, cz = az + dz * t;
+  return { d: Math.hypot(px - cx, pz - cz), t };
+}
+
+// Tyroliennes : E près de la CORDE → s'accroche au point le plus proche et part dans
+// la direction du REGARD (vers l'extrémité que l'on regarde).
 function checkZiplines() {
   if (player.zip) return;
   const zls = env?.ziplines;
   if (!zls || !zls.length || !input.act("use")) return;
+  const fwd = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
   for (const zl of zls) {
-    const da = Math.hypot(player.pos.x - zl.a[0], player.pos.z - zl.a[2]);
-    const db = Math.hypot(player.pos.x - zl.b[0], player.pos.z - zl.b[2]);
-    if (Math.min(da, db) <= (zl.r || 2)) {
-      const [from, to] = da <= db ? [zl.a, zl.b] : [zl.b, zl.a];
-      player.startZip({ x: from[0], y: from[1] + 2, z: from[2] }, { x: to[0], y: to[1] + 2, z: to[2] }, zl.speed);
-      audio.ui?.();
-      break;
-    }
+    const pr = projSegXZ(player.pos.x, player.pos.z, zl.a[0], zl.a[2], zl.b[0], zl.b[2]);
+    if (pr.d > (zl.r || 2)) continue;
+    const cy = 2.0; // hauteur du câble au-dessus des bornes
+    const A = { x: zl.a[0], y: zl.a[1] + cy, z: zl.a[2] };
+    const B = { x: zl.b[0], y: zl.b[1] + cy, z: zl.b[2] };
+    // direction choisie par le regard : produit scalaire avec l'axe du câble
+    const towardB = (fwd.x * (B.x - A.x) + fwd.z * (B.z - A.z)) >= 0;
+    const end = towardB ? B : A;
+    // point d'accroche = projection sur le câble
+    const start = { x: A.x + (B.x - A.x) * pr.t, y: A.y + (B.y - A.y) * pr.t, z: A.z + (B.z - A.z) * pr.t };
+    player.startZip(start, end, zl.speed);
+    audio.ui?.();
+    break;
   }
 }
 

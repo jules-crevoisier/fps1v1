@@ -1,6 +1,6 @@
 {
   "name": "arena-duel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "1v1 FPS arena duel - esport oriented, Apex-like movement",
   "type": "module",
   "main": "electron/main.js",
@@ -11,6 +11,7 @@
     "app:build": "electron-builder --win nsis portable"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
   },
@@ -38,6 +39,13 @@
     ],
     "asarUnpack": [
       "**/node_modules/steamworks.js/**"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jules-crevoisier",
+        "repo": "fps1v1"
+      }
     ],
     "win": {
       "target": [

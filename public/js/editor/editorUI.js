@@ -10,7 +10,7 @@ import { blankMap } from "./editor.js";
 import { openWeaponsEditor } from "./weaponsEditor.js";
 import { steam, ACH } from "../steam.js";
 
-const KIND_LABEL = { cover: "Bloc", spawn: "Spawn", pickup: "Soin" };
+const KIND_LABEL = { cover: "Bloc", spawn: "Spawn", pickup: "Soin", endpoint: "Extrémité" };
 
 /** Petit helper de création d'élément. */
 function el(tag, attrs = {}, children = []) {
@@ -63,6 +63,8 @@ export class EditorUI {
         toolBtn("+ Bloc", "Ajouter un bloc", () => ed.addCover()),
         toolBtn("+ Spawn", "Ajouter un point d'apparition", () => ed.addSpawn()),
         toolBtn("+ Soin", "Ajouter un pickup de soin", () => ed.addPickup()),
+        toolBtn("+ TP", "Ajouter un téléporteur (2 extrémités)", () => ed.addTeleporter()),
+        toolBtn("+ Tyro", "Ajouter une tyrolienne", () => ed.addZipline()),
         toolBtn("Dupliquer", "Dupliquer la sélection (Ctrl+D)", () => ed.duplicateSelected()),
         toolBtn("Supprimer", "Supprimer la sélection (Suppr)", () => ed.deleteSelected()),
       ]),
@@ -164,13 +166,15 @@ export class EditorUI {
   _renderObjList() {
     this.objList.innerHTML = "";
     this._collapsed = this._collapsed || {}; // état de repli par groupe (persistant en session)
-    const groups = { cover: [], spawn: [], pickup: [] };
+    const groups = { cover: [], spawn: [], pickup: [], endpoint: [] };
     this.editor.objects.forEach((o, i) => { (groups[o.kind] || (groups[o.kind] = [])).push({ o, i }); });
 
     const nameOf = (o) => o.kind === "cover" ? `${o.data.accent ? "★ " : ""}Bloc` :
-      o.kind === "spawn" ? `Spawn ${o.index + 1}` : `Soin (${o.data.healAmount || 35})`;
+      o.kind === "spawn" ? `Spawn ${o.index + 1}` :
+      o.kind === "endpoint" ? `${o.ref.type === "tp" ? "TP" : "Tyro"} ${o.ref.index + 1} · ${o.ref.key}` :
+      `Soin (${o.data.healAmount || 35})`;
 
-    for (const kind of ["cover", "spawn", "pickup"]) {
+    for (const kind of ["cover", "spawn", "pickup", "endpoint"]) {
       const list = groups[kind];
       if (!list || !list.length) continue;
       const open = !this._collapsed[kind];
@@ -228,9 +232,21 @@ export class EditorUI {
     this.props.innerHTML = "";
     if (!obj) { this._renderMapProps(); return; }
     const p = this.props;
-    p.appendChild(el("div", { class: "ed-prop-head", text: KIND_LABEL[obj.kind] }));
-    const pos = obj.kind === "spawn" ? this.editor.map.spawns[obj.index] : obj.data.pos;
+    const head = obj.kind === "endpoint"
+      ? (obj.ref.type === "tp" ? "Téléporteur" : "Tyrolienne") + " · " + obj.ref.key
+      : KIND_LABEL[obj.kind];
+    p.appendChild(el("div", { class: "ed-prop-head", text: head }));
+    let pos;
+    if (obj.kind === "spawn") pos = this.editor.map.spawns[obj.index];
+    else if (obj.kind === "endpoint") pos = this.editor._pairArr(obj.ref.type)[obj.ref.index][obj.ref.key];
+    else pos = obj.data.pos;
     p.appendChild(this._num3("Position", ["px", "py", "pz"], pos));
+    if (obj.kind === "endpoint") {
+      p.appendChild(el("div", { class: "ed-prop-note",
+        text: obj.ref.type === "tp"
+          ? "Téléporteur bidirectionnel (les 2 extrémités). Supprimer = retire la paire."
+          : "Tyrolienne : on s'accroche en visant ; direction = le regard. Supprimer = retire la paire." }));
+    }
     if (obj.kind === "cover") {
       p.appendChild(this._num3("Taille (L/H/P)", ["w", "h", "d"], obj.data.size));
       const r = Array.isArray(obj.data.rot) ? obj.data.rot : [0, obj.data.rot || 0, 0];

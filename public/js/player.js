@@ -135,12 +135,12 @@ export class Player {
     ).normalize();
   }
 
-  // Accroche le joueur à une tyrolienne entre a et b (Vector3-like {x,y,z}).
-  startZip(a, b, speed = 16) {
-    const from = new THREE.Vector3(a.x ?? a[0], (a.y ?? a[1]) + this.height, a.z ?? a[2]);
-    const to = new THREE.Vector3(b.x ?? b[0], (b.y ?? b[1]) + this.height, b.z ?? b[2]);
-    const dir = to.clone().sub(from); const len = dir.length() || 1; dir.normalize();
-    this.zip = { from, to, dir, len, speed, travelled: 0 };
+  // Accroche le joueur à une tyrolienne : `from`/`to` sont des points MONDE (hauteur des yeux).
+  startZip(from, to, speed = 16) {
+    const f = new THREE.Vector3(from.x, from.y, from.z);
+    const t = new THREE.Vector3(to.x, to.y, to.z);
+    const dir = t.clone().sub(f); const len = dir.length() || 1; dir.normalize();
+    this.zip = { from: f, to: t, dir, len, speed, travelled: 0 };
     this.sliding = false;
   }
 

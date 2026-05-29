@@ -12,6 +12,8 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "path";
 import fs from "fs/promises";
 import { fileURLToPath } from "url";
+import electronUpdater from "electron-updater";
+const { autoUpdater } = electronUpdater;
 import { startServer } from "../server.js";
 import {
   initSteam, getStatus as steamStatus, unlockAchievement, getAchievements,
@@ -222,6 +224,23 @@ async function createWindow() {
   await mainWindow.loadURL(USE_EMBEDDED ? `http://localhost:${PORT}` : SERVER_URL);
 }
 
+// Mise à jour automatique (electron-updater + GitHub Releases). Uniquement en build
+// packagé installé : vérifie au démarrage, télécharge en tâche de fond, installe à la
+// fermeture. Échoue silencieusement si pas de release / hors ligne.
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.on("update-downloaded", () => {
+      if (mainWindow) mainWindow.webContents.send("update-ready");
+    });
+    autoUpdater.on("error", (e) => console.warn("[updater]", e?.message || e));
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => console.warn("[updater] check:", e?.message || e));
+  } catch (e) {
+    console.warn("[updater] indisponible :", e?.message || e);
+  }
+}
+
 function stopServer() {
   if (serverInstance && typeof serverInstance.close === "function") {
     serverInstance.close();
@@ -239,6 +258,7 @@ app.whenReady().then(async () => {
   // Serveur local embarqué uniquement si l'URL pointe en local (sinon on joue sur Render).
   if (USE_EMBEDDED) serverInstance = startServer({ port: PORT, host: "127.0.0.1", exposeOnNetwork: false });
   await createWindow();
+  setupAutoUpdate();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
