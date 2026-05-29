@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARENA DUEL — 1v1 FPS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- ===================== HUB / LOBBY ===================== -->
+  <div id="menu" class="screen">
+    <div class="menu-bg"></div>
+    <div class="hub">
+      <header class="hub-head">
+        <div class="brand">ARENA<span>DUEL</span></div>
+        <div class="profile-chip">
+          <span id="hub-level" class="lvl">LV.1</span>
+          <input id="pseudo" type="text" maxlength="16" placeholder="Pseudo" value="" />
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="play">JOUER</button>
+        <button class="tab" data-tab="loadout">LOADOUT</button>
+        <button class="tab" data-tab="settings">PARAMÈTRES</button>
+        <button class="tab" data-tab="stats">STATS</button>
+      </nav>
+
+      <div class="tab-body">
+        <!-- ---- JOUER ---- -->
+        <section class="tabpane" data-pane="play">
+          <div class="field">
+            <span>Archétype</span>
+            <div id="classes" class="class-grid"></div>
+          </div>
+          <div class="field">
+            <span>Mode de jeu</span>
+            <div id="mode-sel" class="pill-row"></div>
+          </div>
+          <div class="field">
+            <span>Carte</span>
+            <div id="map-sel" class="pill-row"></div>
+          </div>
+          <div class="field">
+            <span>Difficulté du bot (entraînement)</span>
+            <div id="botdiff-sel" class="pill-row"></div>
+          </div>
+          <div class="field">
+            <span>Loadout équipé</span>
+            <div id="loadout-summary" class="loadout-summary"></div>
+          </div>
+          <div class="buttons">
+            <button id="btn-solo" class="btn btn-primary">ENTRAÎNEMENT — vs BOT</button>
+            <button id="btn-online" class="btn btn-secondary">DUEL EN LIGNE — 1v1</button>
+          </div>
+        </section>
+
+        <!-- ---- LOADOUT ---- -->
+        <section class="tabpane hidden" data-pane="loadout">
+          <div class="field">
+            <span>Arme principale</span>
+            <div id="loadout-primary" class="weapon-grid"></div>
+          </div>
+          <div class="field">
+            <span>Arme secondaire</span>
+            <div id="loadout-secondary" class="weapon-grid"></div>
+          </div>
+          <div class="field">
+            <span id="skin-title">Skin — Fusil d'assaut</span>
+            <div id="loadout-skins" class="skin-row"></div>
+          </div>
+        </section>
+
+        <!-- ---- PARAMÈTRES ---- -->
+        <section class="tabpane hidden" data-pane="settings">
+          <div class="settings">
+            <label class="slider-row">
+              <span class="slabel">Sensibilité souris</span>
+              <input id="set-sens" type="range" min="0.2" max="3" step="0.05" value="1" />
+              <span id="set-sens-val" class="sval">1.00</span>
+            </label>
+            <label class="slider-row">
+              <span class="slabel">Champ de vision (FOV)</span>
+              <input id="set-fov" type="range" min="70" max="110" step="1" value="90" />
+              <span id="set-fov-val" class="sval">90</span>
+            </label>
+          </div>
+          <div class="controls-hint" style="margin-top:18px;text-align:left">
+            <b>ZQSD/WASD</b> bouger (sprint auto) · <b>Alt</b> marcher · <b>Souris</b> viser · <b>Clic</b> tirer ·
+            <b>Espace</b> sauter · <b>Ctrl</b> slide · <b>R</b> recharger · <b>1/2</b> armes · <b>Entrée</b> chat · <b>Échap</b> pause
+          </div>
+        </section>
+
+        <!-- ---- STATS ---- -->
+        <section class="tabpane hidden" data-pane="stats">
+          <div id="stats-grid" class="stats-grid"></div>
+          <div class="field" style="margin-top:16px">
+            <span id="xp-label">Niveau 1</span>
+            <div class="xp-bar"><div id="xp-fill"></div></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== FILE D'ATTENTE ===================== -->
+  <div id="waiting" class="screen hidden">
+    <div class="spinner"></div>
+    <p>Recherche d'un adversaire…</p>
+    <button id="btn-cancel" class="btn btn-ghost">Annuler</button>
+  </div>
+
+  <!-- ===================== HUD EN JEU ===================== -->
+  <div id="hud" class="hidden">
+    <div id="dmg-flash"></div>
+    <div id="crosshair">
+      <span class="ch ch-t"></span><span class="ch ch-b"></span>
+      <span class="ch ch-l"></span><span class="ch ch-r"></span>
+    </div>
+    <div id="hitmarker"></div>
+
+    <div id="scoreboard">
+      <span id="score-me">0</span>
+      <span class="score-sep">—</span>
+      <span id="score-opp">0</span>
+    </div>
+
+    <div id="bottom-left">
+      <div id="healthbar"><div id="health-fill"></div><span id="health-text">100</span></div>
+      <div id="class-name"></div>
+    </div>
+
+    <div id="bottom-right">
+      <div id="ammo"><span id="ammo-cur">30</span><span id="ammo-sep">/</span><span id="ammo-max">30</span></div>
+      <div id="weapon-name"></div>
+      <div id="reloading" class="hidden">RECHARGE…</div>
+    </div>
+
+    <div id="killfeed"></div>
+    <div id="state-tag"></div>
+
+    <!-- Lunette sniper -->
+    <div id="scope" class="hidden">
+      <div class="scope-circle"></div>
+      <div class="scope-line scope-h"></div>
+      <div class="scope-line scope-v"></div>
+      <div class="scope-dot"></div>
+    </div>
+
+    <!-- Chat -->
+    <div id="chat">
+      <div id="chat-log"></div>
+      <input id="chat-input" class="hidden" type="text" maxlength="200" placeholder="Message… (Entrée pour envoyer)" />
+    </div>
+  </div>
+
+  <!-- ===================== ÉCRAN DE FIN ===================== -->
+  <div id="endscreen" class="screen hidden">
+    <h1 id="end-title">VICTOIRE</h1>
+    <p id="end-score"></p>
+    <div id="end-stats" class="stats-grid"></div>
+    <div id="end-weaponxp"></div>
+    <div id="end-xp">+0 XP</div>
+    <div class="buttons" style="flex-direction:row;gap:12px;min-width:340px">
+      <button id="btn-replay" class="btn btn-primary">REJOUER</button>
+      <button id="btn-menu" class="btn btn-ghost">MENU</button>
+    </div>
+  </div>
+
+  <!-- ===================== PAUSE ===================== -->
+  <div id="pause" class="screen hidden">
+    <h1 class="title" style="font-size:54px">PAUSE</h1>
+    <div class="buttons" style="min-width:300px">
+      <button id="btn-resume" class="btn btn-primary">REPRENDRE</button>
+      <button id="btn-quit" class="btn btn-ghost">QUITTER AU MENU</button>
+    </div>
+  </div>
+
+  <canvas id="game"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

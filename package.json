@@ -1,0 +1,14 @@
+{
+  "name": "arena-duel",
+  "version": "0.1.0",
+  "description": "1v1 FPS arena duel - esport oriented, Apex-like movement",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --host"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

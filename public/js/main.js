@@ -1,0 +1,604 @@
+import * as THREE from "three";
+import { SETTINGS, CLASSES, USER, saveUser, PROFILE, saveProfile, weaponColor, GAMEMODES } from "./config.js";
+import { Input } from "./input.js";
+import { buildArena, MAP_LIST } from "./arena.js";
+import { Player } from "./player.js";
+import { Avatar } from "./avatar.js";
+import { Bot } from "./bot.js";
+import { UI } from "./ui.js";
+import { Network } from "./network.js";
+import { ViewModel } from "./viewmodel.js";
+import { audio } from "./audio.js";
+import { PickupsManager } from "./pickups.js";
+
+const canvas = document.getElementById("game");
+const ui = new UI();
+const input = new Input(canvas);
+const net = new Network();
+
+let renderer, scene, camera, env, player, oppAvatar, bot, viewmodel;
+let pickups = null;
+let state = "menu", mode = "solo";
+let score = { me: 0, opp: 0 };
+let myRespawn = 0, botRespawn = 0;
+let oppAlive = true;
+const tracers = [];
+const clock = new THREE.Clock();
+let netAccum = 0, curFov = 90, stepT = 0, wasReloading = false;
+let match = { shots: 0, hits: 0, damage: 0, xpStart: 0 };
+let gm = GAMEMODES.duel, builtMap = null, roundTimer = 0, onlineSide = 0;
+
+// ============================ INIT 3D ============================
+function initRenderer() {
+  if (renderer) return;
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  camera = new THREE.PerspectiveCamera(90, innerWidth / innerHeight, 0.05, 1000);
+  addEventListener("resize", () => {
+    renderer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+  });
+}
+
+function buildScene(mapId) {
+  if (viewmodel) viewmodel.dispose();
+  if (pickups) { pickups.dispose(); pickups = null; }
+  scene = new THREE.Scene();
+  env = buildArena(scene, mapId);
+  oppAvatar = new Avatar(scene);
+  scene.add(camera);                 // pour que le viewmodel (enfant) soit rendu
+  viewmodel = new ViewModel(camera);
+  viewmodel._tintFor = (id) => weaponColor(id);
+  pickups = new PickupsManager(scene);
+  builtMap = mapId;
+}
+
+// Choisit un spawn : le plus loin de `awayFrom` si multi-spawn, sinon index fixe.
+function chooseSpawn(awayFrom, fallbackIndex) {
+  if (!gm.multiSpawn || !awayFrom) return env.spawns[fallbackIndex].clone();
+  let best = env.spawns[0], bestD = -1;
+  for (const s of env.spawns) {
+    const d = s.distanceToSquared(awayFrom);
+    if (d > bestD) { bestD = d; best = s; }
+  }
+  return best.clone();
+}
+
+// ============================ TIR / DÉGÂTS ============================
+function spawnTracer(origin, end, color = 0x00e5ff) {
+  const geo = new THREE.BufferGeometry().setFromPoints([origin, end]);
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+  tracers.push({ line, life: 0.08 });
+}
+
+// Marque d'impact sur un mur, orientée selon la normale, qui s'estompe.
+const impacts = [];
+const _impactGeo = new THREE.CircleGeometry(0.09, 8);
+function spawnImpact(point, localNormal, object) {
+  const n = localNormal.clone().transformDirection(object.matrixWorld);
+  const mesh = new THREE.Mesh(_impactGeo, new THREE.MeshBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.85, depthWrite: false }));
+  mesh.position.copy(point).addScaledVector(n, 0.015);
+  mesh.lookAt(point.clone().add(n));
+  scene.add(mesh);
+  impacts.push({ mesh, life: 5 });
+  if (impacts.length > 40) { const o = impacts.shift(); scene.remove(o.mesh); o.mesh.material.dispose(); }
+}
+
+// Projette un point 3D à l'écran et affiche les dégâts.
+function showDamage(worldPos, amount, headshot) {
+  const v = worldPos.clone().project(camera);
+  if (v.z > 1) return;
+  const x = (v.x * 0.5 + 0.5) * innerWidth;
+  const y = (-v.y * 0.5 + 0.5) * innerHeight;
+  ui.damageNumber(x, y, Math.round(amount), headshot);
+}
+
+// 1× par tir : effets + envoi réseau (le serveur résout les dégâts en online).
+function onPlayerFire(origin, base, weapon) {
+  viewmodel.fire();
+  audio.shoot(weapon);
+  if (mode === "online") {
+    match.shots++;
+    net.sendShot({
+      ox: origin.x, oy: origin.y, oz: origin.z,
+      dir: { x: base.x, y: base.y, z: base.z }, weaponId: player.weaponState.id,
+    });
+  }
+}
+
+// Par projectile : visuels (tracer, impact) + dégâts UNIQUEMENT en solo.
+function onPlayerShoot(origin, dir, weapon) {
+  const ray = new THREE.Raycaster(origin, dir, 0.1, weapon.range);
+  const wallHits = ray.intersectObjects(env.solids, false);
+  const wallDist = wallHits.length ? wallHits[0].distance : weapon.range;
+  let end = origin.clone().addScaledVector(dir, Math.min(wallDist, weapon.range));
+  let hitTarget = false;
+
+  if (mode === "solo") {
+    match.shots++;
+    if (oppAvatar.group.visible && oppAvatar.alive) {
+      const tHits = ray.intersectObjects(oppAvatar.hitMeshes, false);
+      if (tHits.length && tHits[0].distance < wallDist) {
+        hitTarget = true;
+        const headshot = tHits[0].object.userData.zone === "head";
+        const dmg = weapon.damage * (headshot ? (weapon.headshotMult || 1.6) : 1);
+        end = tHits[0].point.clone();
+        ui.hitmarker(); showDamage(tHits[0].point, dmg, headshot);
+        headshot ? audio.headshot() : audio.hit();
+        match.hits++; match.damage += dmg;
+        const dead = oppAvatar.takeDamage(dmg);
+        if (dead) onOpponentKilled(headshot);
+      }
+    }
+  }
+  spawnTracer(origin, end, weaponColor(player.weaponState.id));
+  if (!hitTarget && wallHits.length && wallHits[0].face) {
+    spawnImpact(wallHits[0].point, wallHits[0].face.normal, wallHits[0].object);
+  }
+}
+
+// Tir du bot vers le joueur.
+function onBotShoot(origin, dir, didHit, dmg) {
+  const end = origin.clone().addScaledVector(dir, didHit ? origin.distanceTo(player.pos) : 30);
+  spawnTracer(origin, end, 0xe8433f);
+  if (didHit && player.alive && player.invuln <= 0) {
+    audio.hurt();
+    ui.flashDamage();
+    const dead = player.takeDamage(dmg);
+    if (dead) onPlayerKilled();
+  }
+}
+
+// XP : joueur (débloque armes) + maîtrise de l'arme utilisée (débloque skins).
+function grantKillXp(weaponId, headshot) {
+  PROFILE.stats.kills++;
+  PROFILE.xp += headshot ? 35 : 25;
+  const wk = headshot ? 45 : 30;
+  PROFILE.weaponXp[weaponId] = (PROFILE.weaponXp[weaponId] || 0) + wk;
+  match.weaponXp[weaponId] = (match.weaponXp[weaponId] || 0) + wk;
+}
+
+function onOpponentKilled(headshot) {
+  score.me++;
+  grantKillXp(player.weaponState.id, headshot);
+  ui.setScore(score.me, score.opp);
+  ui.killfeed(`Tu as éliminé l'adversaire${headshot ? " — HEADSHOT" : ""}`, true);
+  if (gameOver()) return;
+  if (gm.roundReset && mode === "solo") { resetRound(); return; }
+  oppAvatar.setVisible(false);
+  if (mode === "solo") botRespawn = gm.respawnDelay;
+}
+
+function onPlayerKilled() {
+  score.opp++;
+  PROFILE.stats.deaths++;
+  ui.setScore(score.me, score.opp);
+  ui.killfeed("Tu as été éliminé", false);
+  player.alive = false;
+  if (mode === "online") net.sendDied({});
+  if (gameOver()) return;
+  if (gm.roundReset && mode === "solo") { resetRound(); return; }
+  ui.stateTag("ÉLIMINÉ", "#e8433f");
+  myRespawn = gm.respawnDelay;
+}
+
+// Vérifie la fin de partie ; renvoie true si la partie est terminée.
+function gameOver() {
+  if (score.me >= gm.scoreToWin || score.opp >= gm.scoreToWin) {
+    endGame(score.me >= gm.scoreToWin);
+    return true;
+  }
+  return false;
+}
+
+// Duel par manches : on téléporte les deux aux coins opposés, décompte, puis reprise.
+function resetRound() {
+  player.spawn(env.spawns[0].clone(), Math.PI / 4);
+  player.invuln = gm.roundDelay + 0.4;
+  if (mode === "solo" && bot) { bot.spawn(env.spawns[1].clone()); oppAvatar.setVisible(true); }
+  roundTimer = gm.roundDelay;
+  // synchronise la caméra tout de suite (le joueur est gelé pendant le décompte)
+  camera.position.copy(player.pos);
+  const d = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+  camera.lookAt(player.pos.clone().add(d));
+}
+
+function respawnPlayer() {
+  const sp = chooseSpawn(oppAvatar.group.position, 0);
+  player.spawn(sp, Math.atan2(-sp.x, -sp.z));   // regarde vers le centre
+  player.invuln = gm.spawnInvuln;
+  ui.clearStateTag();
+}
+
+// ============================ BOUCLE ============================
+function loop() {
+  if (state !== "playing") return;
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (roundTimer > 0) {
+    // --- Décompte de manche : joueur et bot gelés ---
+    roundTimer -= dt;
+    ui.setScope(false);
+    ui.stateTag(roundTimer > 0.05 ? "NOUVELLE MANCHE — " + Math.ceil(roundTimer) : "GO !", "#ff9e2c");
+  } else {
+    // respawns (modes sans reset de manche)
+    if (!player.alive) {
+      ui.setScope(false);
+      myRespawn -= dt;
+      if (myRespawn <= 0) respawnPlayer();
+    } else {
+      player.update(dt, input, env);
+
+      // ADS : zoom de la caméra (lunette pour sniper/dmr)
+      const ads = input.adsDown && input.locked;
+      const id = player.weaponState.id;
+      const tgtFov = ads ? (id === "sniper" ? 32 : id === "dmr" ? 50 : USER.fov * 0.72) : USER.fov;
+      curFov += (tgtFov - curFov) * Math.min(1, dt * 14);
+      camera.fov = curFov; camera.updateProjectionMatrix();
+
+      // Lunette pour le sniper : overlay scope + arme masquée
+      const scoped = ads && id === "sniper";
+      ui.setScope(scoped);
+      viewmodel.group.visible = !scoped;
+      viewmodel.update(dt, player, ads);
+
+      // bruit de pas
+      const sp = Math.hypot(player.vel.x, player.vel.z);
+      if (sp > 1 && player.onGround) {
+        stepT -= dt;
+        if (stepT <= 0) { audio.step(); stepT = 0.34; }
+      }
+      if (player.weaponState.reloading && !wasReloading) audio.reload();
+      wasReloading = player.weaponState.reloading;
+    }
+
+    if (mode === "solo") {
+      if (!oppAvatar.alive) {
+        botRespawn -= dt;
+        if (botRespawn <= 0) { bot.spawn(chooseSpawn(player.pos, 1)); }
+      } else {
+        bot.update(dt, player.pos, player.alive);
+      }
+    } else {
+      sendNetState(dt);
+    }
+
+    // tag d'invincibilité (hors décompte)
+    if (player.alive) {
+      if (player.invuln > 0) ui.stateTag("PROTÉGÉ", "#ff9e2c"); else ui.clearStateTag();
+    }
+  }
+
+  // HUD
+  ui.setHealth(player.health, player.maxHealth);
+  ui.setAmmo(player.weaponState.ammo, player.weapon.mag);
+  ui.setWeapon(player.weapon.name);
+  ui.setReloading(player.weaponState.reloading);
+
+  // pickups
+  if (pickups) {
+    pickups.update(dt);
+    if (mode === "solo") {
+      const gained = pickups.tryCollectSolo(player);
+      if (gained > 0) { audio.heal(); ui.killfeed(`+${Math.round(gained)} PV`, true); }
+    }
+  }
+
+  // tracers
+  for (let i = tracers.length - 1; i >= 0; i--) {
+    const t = tracers[i];
+    t.life -= dt;
+    t.line.material.opacity = Math.max(0, t.life / 0.08) * 0.9;
+    if (t.life <= 0) { scene.remove(t.line); t.line.geometry.dispose(); t.line.material.dispose(); tracers.splice(i, 1); }
+  }
+  // impacts (fondu sur la fin de vie)
+  for (let i = impacts.length - 1; i >= 0; i--) {
+    const im = impacts[i];
+    im.life -= dt;
+    if (im.life < 1) im.mesh.material.opacity = Math.max(0, im.life) * 0.85;
+    if (im.life <= 0) { scene.remove(im.mesh); im.mesh.material.dispose(); impacts.splice(i, 1); }
+  }
+
+  // billboards (barres de vie face caméra) — gérés par Sprite automatiquement
+  renderer.render(scene, camera);
+}
+
+function sendNetState(dt) {
+  netAccum += dt;
+  if (netAccum < 0.04) return; // ~25 Hz
+  netAccum = 0;
+  net.sendState({
+    x: player.pos.x, y: player.pos.y, z: player.pos.z,
+    yaw: player.yaw, classId: player.classId,
+    health: player.health, maxHealth: player.maxHealth, alive: player.alive,
+  });
+}
+
+// ============================ DÉMARRAGE ============================
+function startGame(m) {
+  mode = m;
+  gm = GAMEMODES[PROFILE.mode] || GAMEMODES.duel;
+  initRenderer();
+  if (!scene || builtMap !== PROFILE.map) buildScene(PROFILE.map);
+  score = { me: 0, opp: 0 };
+  match = { shots: 0, hits: 0, damage: 0, xpStart: PROFILE.xp, weaponXp: {} };
+  roundTimer = 0;
+  ui.setScore(0, 0);
+
+  player = new Player(camera, PROFILE.loadout);
+  player.onShoot = onPlayerShoot;
+  player.onFire = onPlayerFire;
+  const spawnIdx = (mode === "online") ? onlineSide : 0;
+  player.spawn(env.spawns[spawnIdx].clone(), Math.PI / 4);
+  player.invuln = (mode === "online") ? 2.3 : gm.spawnInvuln;
+  ui.setClassName(CLASSES[PROFILE.loadout.classId].name);
+
+  curFov = USER.fov;
+  camera.fov = USER.fov;
+  camera.updateProjectionMatrix();
+  audio.init();
+  viewmodel.setWeapon(player.weaponState.id, weaponColor(player.weaponState.id));
+  wasReloading = false;
+
+  if (mode === "solo") {
+    const diff = PROFILE.botDiff || 0.6;
+    const botHp = diff < 0.5 ? 70 : diff < 0.75 ? 100 : 130;
+    oppAvatar.setClassColor("sniper");
+    oppAvatar.setHealthMax(botHp);
+    bot = new Bot(oppAvatar, env, diff);
+    bot.onShoot = onBotShoot;
+    bot.spawn(chooseSpawn(player.pos, 1));
+
+    // Heal pickups en solo : 3 points fixes (simples et lisibles).
+    pickups?.initLocal([
+      { id: "h1", x: 0, y: 1.7, z: 0, healAmount: 35 },
+      { id: "h2", x: env.spawns[2].x * 0.55, y: 1.7, z: env.spawns[2].z * 0.55, healAmount: 35 },
+      { id: "h3", x: env.spawns[3].x * 0.55, y: 1.7, z: env.spawns[3].z * 0.55, healAmount: 35 },
+    ]);
+  } else {
+    oppAvatar.setVisible(false);
+  }
+
+  state = "playing";
+  ui.show(null);
+  ui.showHud();
+  ui.clearStateTag();
+  clock.getDelta();
+  canvas.requestPointerLock();
+  loop();
+}
+
+function endGame(win) {
+  state = "ended";
+  ui.setScope(false);
+  document.exitPointerLock();
+  if (mode === "online") net.disconnect();
+  PROFILE.stats.games++;
+  if (win) { PROFILE.stats.wins++; PROFILE.xp += 100; }
+  saveProfile();
+  ui.renderStats();
+  ui.endScreen(win, {
+    me: score.me, opp: score.opp,
+    damage: match.damage, shots: match.shots, hits: match.hits,
+    xp: PROFILE.xp - match.xpStart, weaponXp: match.weaponXp,
+  });
+}
+
+function openPause() {
+  if (state !== "playing") return;
+  state = "paused";
+  ui.el.pause.classList.remove("hidden");
+}
+function resume() {
+  if (state !== "paused") return;
+  ui.el.pause.classList.add("hidden");
+  state = "playing";
+  clock.getDelta();
+  canvas.requestPointerLock();
+  loop();
+}
+
+function backToMenu() {
+  ui.el.pause.classList.add("hidden");
+  state = "menu";
+  document.exitPointerLock();
+  if (net.socket) net.disconnect();
+  ui.show("menu");
+}
+
+// ============================ ONLINE ============================
+function setupNet() {
+  net.on("waiting", () => ui.show("waiting"));
+  net.on("matchFound", (d) => {
+    onlineSide = d.side;
+    const oppClass = d.opponent?.classId || "assault";
+    if (d.mapId) PROFILE.map = d.mapId;  // map synchronisée par le serveur (non persistée)
+    startGame("online");                 // (re)construit la scène + oppAvatar
+    oppAvatar.setVisible(true);
+    oppAvatar.setClassColor(oppClass);
+    oppAvatar.setHealthMax(CLASSES[oppClass].health);
+    ui.chat("Système", "Adversaire trouvé ! Combat !", true);
+  });
+  net.on("opponentState", (s) => {
+    if (!oppAvatar) return;
+    oppAvatar.setVisible(s.alive !== false);
+    if (s.alive !== false) {
+      oppAvatar.setPosition(s.x, s.y, s.z);
+      oppAvatar.setYaw(s.yaw);
+      oppAvatar.alive = true;
+      if (typeof s.health === "number") { oppAvatar.health = s.health; oppAvatar._drawHp(s.health / (s.maxHealth || 100)); }
+    } else {
+      oppAvatar.alive = false;
+    }
+  });
+  // Mon tir a touché (validé serveur)
+  net.on("hit", (d) => {
+    ui.hitmarker();
+    d.headshot ? audio.headshot() : audio.hit();
+    oppAvatar.health = d.oppHealth; oppAvatar._drawHp(d.oppHealth / (oppAvatar.maxHealth || 100));
+    showDamage(oppAvatar.group.position.clone().setY(1.4), d.damage, d.headshot);
+    match.hits++; match.damage += d.damage;
+  });
+  // J'ai pris des dégâts (validé serveur)
+  net.on("damaged", (d) => {
+    player.health = d.health;
+    audio.hurt(); ui.flashDamage();
+  });
+  // J'ai été soigné (validé serveur)
+  net.on("healed", (d) => {
+    if (typeof d?.health === "number") player.health = d.health;
+    audio.heal();
+    if (typeof d?.amount === "number" && d.amount > 0) ui.killfeed(`+${Math.round(d.amount)} PV`, true);
+  });
+
+  net.on("pickupsInit", (d) => {
+    if (!pickups) return;
+    pickups.initFromServer(d?.pickups || []);
+  });
+  net.on("pickupTaken", (d) => {
+    if (!pickups) return;
+    if (d && d.id) pickups.markTaken(String(d.id), { respawnInMs: d.respawnInMs });
+  });
+  // Fin de manche (un kill a eu lieu) : score + téléport + décompte
+  net.on("roundReset", (d) => {
+    const me = d.scores[onlineSide] || 0, opp = d.scores[1 - onlineSide] || 0;
+    score = { me, opp };
+    ui.setScore(me, opp);
+    if (d.killerSide === onlineSide) { ui.killfeed("Tu as éliminé l'adversaire", true); grantKillXp(player.weaponState.id, false); }
+    else { ui.killfeed("Tu as été éliminé", false); PROFILE.stats.deaths++; }
+    // téléport + invincibilité + décompte
+    player.spawn(env.spawns[onlineSide].clone(), Math.PI / 4);
+    player.invuln = 2.4;
+    roundTimer = 2;
+    camera.position.copy(player.pos);
+    const dd = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+    camera.lookAt(player.pos.clone().add(dd));
+  });
+  net.on("gameOver", (d) => {
+    const me = d.scores[onlineSide] || 0, opp = d.scores[1 - onlineSide] || 0;
+    score = { me, opp };
+    endGame(d.winnerSide === onlineSide);
+  });
+  net.on("opponentLeft", () => {
+    ui.chat("Système", "L'adversaire a quitté. Victoire par forfait.", true);
+    endGame(true);
+  });
+  net.on("chat", (d) => ui.chat(d.pseudo, d.text));
+  net.on("error", (m) => { ui.chat("Système", m, true); backToMenu(); });
+}
+
+// ============================ CHAT ============================
+function setupChat() {
+  const inp = ui.el.chatInput;
+  addEventListener("keydown", (e) => {
+    if (state !== "playing") return;
+    if (e.code === "Enter") {
+      if (inp.classList.contains("hidden")) {
+        inp.classList.remove("hidden");
+        input.setChatOpen(true);
+        document.exitPointerLock();
+        inp.focus();
+        e.preventDefault();
+      } else {
+        const text = inp.value.trim();
+        if (text) {
+          if (mode === "online") net.sendChat(text);
+          else ui.chat(PROFILE.pseudo, text);
+        }
+        inp.value = "";
+        inp.classList.add("hidden");
+        input.setChatOpen(false);
+      }
+    } else if (e.code === "Escape" && !inp.classList.contains("hidden")) {
+      inp.value = ""; inp.classList.add("hidden"); input.setChatOpen(false);
+    }
+  });
+}
+
+// ============================ UI / BOUTONS ============================
+function setupUI() {
+  ui.setupTabs();
+  ui.buildClassCards(CLASSES, PROFILE.loadout.classId, (id) => {
+    PROFILE.loadout.classId = id; saveProfile();
+  });
+  ui.renderLoadout(() => {});   // grilles d'armes + skins + résumé
+  ui.renderStats();
+
+  // Sélecteurs mode + carte
+  const modes = Object.entries(GAMEMODES).map(([id, m]) => ({ id, name: m.name, desc: m.desc }));
+  ui.buildPills("mode-sel", modes, PROFILE.mode, (id) => { PROFILE.mode = id; saveProfile(); });
+  ui.buildPills("map-sel", MAP_LIST, PROFILE.map, (id) => { PROFILE.map = id; saveProfile(); });
+  const diffs = [
+    { id: "0.4", name: "Facile", desc: "Bot lent, peu précis, 70 PV." },
+    { id: "0.6", name: "Normal", desc: "Équilibré, 100 PV." },
+    { id: "0.85", name: "Difficile", desc: "Rapide et précis, 130 PV." },
+  ];
+  ui.buildPills("botdiff-sel", diffs, String(PROFILE.botDiff), (id) => { PROFILE.botDiff = parseFloat(id); saveProfile(); });
+  ui.el.pseudo.value = PROFILE.pseudo;
+  ui.el.pseudo.oninput = () => { PROFILE.pseudo = ui.el.pseudo.value || "Joueur"; saveProfile(); };
+
+  // Paramètres (sensibilité / FOV) — live + persistance
+  const sens = document.getElementById("set-sens");
+  const sensVal = document.getElementById("set-sens-val");
+  const fov = document.getElementById("set-fov");
+  const fovVal = document.getElementById("set-fov-val");
+  sens.value = USER.sensitivity; sensVal.textContent = Number(USER.sensitivity).toFixed(2);
+  fov.value = USER.fov; fovVal.textContent = USER.fov;
+  sens.oninput = () => {
+    USER.sensitivity = parseFloat(sens.value);
+    sensVal.textContent = USER.sensitivity.toFixed(2);
+    saveUser();
+  };
+  fov.oninput = () => {
+    USER.fov = parseInt(fov.value, 10);
+    fovVal.textContent = USER.fov;
+    if (camera) { camera.fov = USER.fov; camera.updateProjectionMatrix(); }
+    saveUser();
+  };
+
+  // init audio + petit son sur tous les boutons (1er geste utilisateur)
+  document.querySelectorAll(".btn, .tab").forEach((b) =>
+    b.addEventListener("click", () => { audio.init(); audio.ui(); }));
+
+  document.getElementById("btn-solo").onclick = () => startGame("solo");
+  document.getElementById("btn-online").onclick = () => {
+    setupNet();
+    net.connect();
+    setTimeout(() => net.queue(PROFILE.pseudo, PROFILE.loadout.classId, PROFILE.loadout), 200);
+  };
+  document.getElementById("btn-cancel").onclick = backToMenu;
+  document.getElementById("btn-replay").onclick = () => startGame(mode);
+  document.getElementById("btn-menu").onclick = backToMenu;
+  document.getElementById("btn-resume").onclick = resume;
+  document.getElementById("btn-quit").onclick = backToMenu;
+
+  // Pause auto quand on perd le pointer-lock en jeu (touche Échap)
+  document.addEventListener("pointerlockchange", () => {
+    if (state === "playing" && !document.pointerLockElement &&
+        ui.el.chatInput.classList.contains("hidden")) {
+      openPause();
+    }
+  });
+
+  // reverrouiller le pointeur en cliquant pendant le jeu
+  canvas.addEventListener("click", () => {
+    if (state === "playing" && !input.locked && ui.el.chatInput.classList.contains("hidden")) {
+      canvas.requestPointerLock();
+    }
+  });
+}
+
+// Override de queue pour envoyer la carte au serveur (sync online).
+const _origQueue = net.queue.bind(net);
+net.queue = (pseudo, classId, loadout) => _origQueue(pseudo, classId, loadout, PROFILE.map);
+
+setupUI();
+setupChat();
+ui.show("menu");
