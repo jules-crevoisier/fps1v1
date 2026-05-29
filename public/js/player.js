@@ -292,7 +292,9 @@ export class Player {
     const head = this.pos.y;                       // y des yeux ~ haut
     for (const box of colliders) {
       // recouvrement vertical du joueur avec le box ?
-      if (head < box.min.y || feet > box.max.y) continue;
+      // tolérance 0.15 sur le sommet : si on se TIENT dessus (pieds ≈ sommet),
+      // pas de poussée horizontale (sinon la plateforme nous éjecte du bord).
+      if (head < box.min.y || feet > box.max.y - 0.15) continue;
       const minX = box.min.x - r, maxX = box.max.x + r;
       const minZ = box.min.z - r, maxZ = box.max.z + r;
       if (px > minX && px < maxX && pz > minZ && pz < maxZ) {

@@ -101,13 +101,17 @@ export class Bot {
   }
 
   _hasLineOfSight(targetPos) {
+    // On vise le TORSE (yeux - 0.8) : le bot ne tire que s'il voit le corps,
+    // pas juste un sommet de tête qui dépasse d'un muret.
+    const target = new THREE.Vector3(targetPos.x, targetPos.y - 0.8, targetPos.z);
     const origin = this.pos.clone();
-    const dir = new THREE.Vector3().subVectors(targetPos, origin);
+    const dir = new THREE.Vector3().subVectors(target, origin);
     const dist = dir.length();
     dir.normalize();
-    const ray = new THREE.Raycaster(origin, dir, 0.5, dist - 0.5);
-    const hits = ray.intersectObjects(this.env.solids, false);
-    return hits.length === 0;
+    const ray = new THREE.Raycaster(origin, dir, 0.4, Math.max(0.1, dist - 0.4));
+    // occluders = blocs/murs réels (pas le sol/terrain, pour ne pas se bloquer soi-même).
+    const blockers = this.env.occluders || this.env.solids || [];
+    return ray.intersectObjects(blockers, false).length === 0;
   }
 
   _step(axis, delta) {
