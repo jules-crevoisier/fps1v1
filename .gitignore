@@ -8,3 +8,6 @@ npm-debug.log*
 # Non versionné car propre à l'environnement de dev ; à recréer localement
 # (cf. README, section Steam). En build packagé, Steam fournit l'AppID lui-même.
 /steam_appid.txt
+
+# log de build local
+/build-log.txt
