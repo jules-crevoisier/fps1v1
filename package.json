@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js --host",
     "app:dev": "electron .",
-    "app:build": "electron-builder --win nsis portable"
+    "app:build": "electron-builder --win nsis portable",
+    "app:publish": "electron-builder --win nsis portable --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.8.3",
