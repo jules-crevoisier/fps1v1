@@ -21,6 +21,12 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 
+// URL du serveur de jeu. Par défaut : serveur en ligne (Render) → l'app desktop
+// joue le multijoueur réel et lit les cartes/armes publiées. Surchargeable via
+// ARENA_SERVER_URL (ex. http://localhost:3000 pour un serveur local embarqué).
+const SERVER_URL = process.env.ARENA_SERVER_URL || "https://fps1v1.onrender.com";
+const USE_EMBEDDED = /localhost|127\.0\.0\.1/.test(SERVER_URL);
+
 // Mode développeur : actif hors build packagé (npm run app:dev) ou si ARENA_DEV
 // est forcé. Propagé au renderer via preload (process.env.ARENA_DEV).
 if (!app.isPackaged) process.env.ARENA_DEV = process.env.ARENA_DEV || "1";
@@ -213,7 +219,7 @@ async function createWindow() {
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("closed", () => { mainWindow = null; });
 
-  await mainWindow.loadURL(`http://localhost:${PORT}`);
+  await mainWindow.loadURL(USE_EMBEDDED ? `http://localhost:${PORT}` : SERVER_URL);
 }
 
 function stopServer() {
@@ -230,7 +236,8 @@ app.whenReady().then(async () => {
   // Init Steam de façon SÛRE avant la fenêtre : ne lève jamais, log un avertissement
   // propre si le client Steam n'est pas lancé / lib indisponible (jeu jouable sans).
   initSteam();
-  serverInstance = startServer({ port: PORT, host: "127.0.0.1", exposeOnNetwork: false });
+  // Serveur local embarqué uniquement si l'URL pointe en local (sinon on joue sur Render).
+  if (USE_EMBEDDED) serverInstance = startServer({ port: PORT, host: "127.0.0.1", exposeOnNetwork: false });
   await createWindow();
 
   app.on("activate", () => {
